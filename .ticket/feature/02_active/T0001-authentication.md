@@ -30,3 +30,4 @@ G0共有契約、D1初期migration。
 ## activity
 
 - 2026-11-16: G1実装に着手し、P1へ割当。
+- 2026-11-16: ログインIDのPBKDF2-SHA256検証、HttpOnlyセッションCookie、`/api/v1/auth/password/login`・`/me`・`/logout`の仮実装とAPIテストを追加。招待、OIDC、CSRF、レート制限、管理者ブートストラップは未実装。

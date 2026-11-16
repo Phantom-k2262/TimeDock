@@ -271,7 +271,7 @@ R2へ保存した後、`current_version=expectedVersion` と `lock_id=lockId` �
 
 ## 9. UI/画面設計
 
-- `/login`: メール+パスワード、Microsoft/Googleログイン
+- `/login`: ログインID+パスワード、Microsoft/Googleログイン（メールアドレスは収集しない）
 - `/dashboard`: 月別提出状況、自分の勤務表、今月の提出アクション
 - `/timesheets/new`: テンプレート選択・対象月作成
 - `/timesheets/:id`: バージョン/ロック保持者（必要最小情報）/期限/操作

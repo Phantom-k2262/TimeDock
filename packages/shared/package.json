@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "exports": { ".": "./src/contracts.ts" },
   "scripts": {
     "build": "tsc --noEmit",
     "lint": "tsc --noEmit",

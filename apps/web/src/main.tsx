@@ -8,16 +8,34 @@ function navigate(path: string) {
 }
 
 function LoginPage() {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setBusy(true);
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/v1/auth/password/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ loginId: form.get("loginId"), password: form.get("password") }) });
+      if (!response.ok) throw new Error(response.status === 401 ? "ログインIDまたはパスワードが正しくありません" : "ログインサービスに接続できません");
+      navigate("/dashboard");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "ログインに失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
   return <main>
     <p className="eyebrow">TIMESHEET PORTAL</p>
     <h1>ログイン</h1>
     <p>勤務表ポータルにログインしてください。</p>
-    <form className="login-form" onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); navigate("/dashboard"); }}>
+    <form className="login-form" onSubmit={submit}>
       <label htmlFor="loginId">ログインID</label>
       <input id="loginId" name="loginId" type="text" autoComplete="username" required />
       <label htmlFor="password">パスワード</label>
       <input id="password" name="password" type="password" autoComplete="current-password" required />
-      <button type="submit">ログイン</button>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <button type="submit" disabled={busy}>{busy ? "ログイン中…" : "ログイン"}</button>
     </form>
     <a href="/">トップへ戻る</a>
   </main>;
