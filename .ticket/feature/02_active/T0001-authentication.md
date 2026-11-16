@@ -2,7 +2,7 @@
 id: T0001
 type: feature
 title: "パスワード・OIDC認証とセッション"
-status: new
+status: active
 priority: P1
 owner: P1
 created: 2026-11-16
@@ -29,4 +29,4 @@ G0共有契約、D1初期migration。
 
 ## activity
 
-- 2026-11-16: G1着手候補として登録。
+- 2026-11-16: G1実装に着手し、P1へ割当。

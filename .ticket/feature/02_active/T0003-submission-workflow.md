@@ -2,7 +2,7 @@
 id: T0003
 type: feature
 title: "勤務表の提出・承認・差戻し"
-status: new
+status: active
 priority: P1
 owner: P3
 created: 2026-11-16
@@ -25,4 +25,4 @@ updated: 2026-11-16
 
 ## activity
 
-- 2026-11-16: G1着手候補として登録。
+- 2026-11-16: G1実装に着手し、P3へ割当。

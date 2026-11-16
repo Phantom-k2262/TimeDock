@@ -2,7 +2,7 @@
 id: T0004
 type: feature
 title: "勤務表ワークフローUIとE2E"
-status: new
+status: active
 priority: P2
 owner: P4
 created: 2026-11-16
@@ -25,4 +25,4 @@ updated: 2026-11-16
 
 ## activity
 
-- 2026-11-16: G1着手候補として登録。
+- 2026-11-16: G1実装に着手し、P4へ割当。

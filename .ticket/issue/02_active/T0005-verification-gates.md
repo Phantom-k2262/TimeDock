@@ -2,7 +2,7 @@
 id: T0005
 type: issue
 title: "V1検証と受け入れゲートの運用"
-status: new
+status: active
 priority: P1
 owner: V1
 created: 2026-11-16
@@ -24,4 +24,4 @@ updated: 2026-11-16
 
 ## activity
 
-- 2026-11-16: G0の検証計画から運用チケットを作成。
+- 2026-11-16: G0の検証計画から運用チケットを作成し、V1へ割当。

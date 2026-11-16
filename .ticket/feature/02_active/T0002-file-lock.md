@@ -2,7 +2,7 @@
 id: T0002
 type: feature
 title: "R2版管理とチェックアウトロック"
-status: new
+status: active
 priority: P1
 owner: P2
 created: 2026-11-16
@@ -30,4 +30,4 @@ T0001の認証境界、D1初期migration。
 
 ## activity
 
-- 2026-11-16: G1着手候補として登録。
+- 2026-11-16: G1実装に着手し、P2へ割当。
