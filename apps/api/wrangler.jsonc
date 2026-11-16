@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "timesheet-portal-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-16",
+  "d1_databases": [{ "binding": "DB", "database_name": "timesheet-portal-dev", "database_id": "local" }],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "timesheet-portal-dev" }],
+  "vars": { "APP_ENV": "development", "MAX_UPLOAD_MIB": "10" }
+}

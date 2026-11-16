@@ -1,0 +1,142 @@
+schema_version: 1
+project: timesheet-portal
+mode: multi-agent-if-available
+team:
+  implementers: 4
+  independent_verifiers: 1
+  coordinator: main_codex_agent
+  fallback: sequential-role-execution
+specification:
+  precedence:
+    - DESIGN.md
+    - TEAM_INSTRUCTIONS.md
+    - team.yaml
+    - implementation.yaml
+    - AGENTS.md
+  source_of_truth: DESIGN.md
+runtime:
+  frontend: react-vite-typescript
+  backend: cloudflare-workers-hono
+  database: cloudflare-d1
+  object_storage: private-cloudflare-r2
+  auth: [password, google-oidc, microsoft-personal-oidc]
+  xlsx_editor: desktop-excel-or-compatible
+  package_manager: pnpm
+  tests: [vitest, playwright]
+repository:
+  branch_prefix: agent/
+  isolation: separate-git-worktrees
+  contracts_owner: coordinator
+  api_prefix: /api/v1
+  protected_single_writer_paths:
+    apps/api/migrations: P1
+    apps/api/src/index.ts: coordinator
+    packages/shared: coordinator
+    pnpm-lock.yaml: coordinator
+    docs/decisions: coordinator
+roles:
+  - id: P1
+    title: platform-identity
+    kind: implementer
+    branch: agent/p1-auth
+    owned_paths:
+      - apps/api/src/auth/**
+      - apps/api/migrations/**
+      - apps/api/wrangler.jsonc
+      - apps/api/src/config/**
+    responsibility: [workspace-scaffold, infrastructure, database-migrations, password-auth, oidc, sessions, csrf, rate-limiting]
+    dependencies: [G0]
+  - id: P2
+    title: file-lock
+    kind: implementer
+    branch: agent/p2-files
+    owned_paths:
+      - apps/api/src/modules/files/**
+      - apps/api/src/modules/locks/**
+      - apps/api/src/routes/files*
+      - apps/api/src/routes/locks*
+    responsibility: [r2-private-storage, immutable-versions, checkout, lease-renew, cancel, checkin, download, cas, idempotency]
+    dependencies: [G0, shared-contracts]
+  - id: P3
+    title: workflow-audit
+    kind: implementer
+    branch: agent/p3-workflow
+    owned_paths:
+      - apps/api/src/modules/timesheets/**
+      - apps/api/src/modules/workflow/**
+      - apps/api/src/modules/audit/**
+      - apps/api/src/routes/timesheets*
+      - apps/api/src/routes/admin*
+    responsibility: [rbac, timesheet-lifecycle, submission, approval, rejection, assignments, audit]
+    dependencies: [G0, shared-contracts]
+  - id: P4
+    title: frontend-ux
+    kind: implementer
+    branch: agent/p4-ui
+    owned_paths:
+      - apps/web/**
+      - e2e/**
+    responsibility: [authentication-ui, dashboard, checkout-checkin-ui, approval-ui, admin-ui, browser-e2e]
+    dependencies: [G0, shared-contracts]
+  - id: V1
+    title: independent-verification
+    kind: verifier
+    branch: agent/v1-verification
+    owned_paths:
+      - verification/**
+      - docs/reviews/**
+    responsibility: [test-plan, security-review, concurrency-tests, api-contract-review, acceptance-gate]
+    dependencies: [G0]
+    application_code_writes: prohibited
+phases:
+  - id: G0
+    title: foundation-and-contract-freeze
+    parallel: false
+    owners: [P1, coordinator, V1]
+    exit_criteria: [workspace-installs, typecheck-passes, build-passes, api-contracts-documented, test-plan-exists]
+  - id: G1
+    title: parallel-implementation
+    parallel: true
+    owners: [P1, P2, P3, P4, V1]
+    exit_criteria: [role-tests-pass, change-requests-resolved, agent-reports-ready]
+  - id: G2
+    title: integration-and-independent-verification
+    parallel: false
+    owners: [coordinator, V1]
+    merge_order: [P1, P2, P3, P4]
+    exit_criteria: [lint-passes, typecheck-passes, unit-tests-pass, build-passes, e2e-pass, acceptance-report-complete]
+  - id: G3
+    title: release-gate
+    parallel: false
+    owners: [V1, coordinator]
+    exit_criteria: [no-unresolved-high-severity-defects, acceptance-criteria-pass, operations-documented, explicit-deployment-approval]
+security:
+  private_r2: true
+  checkout_lock: server-side-advisory-exclusive-lease
+  concurrency: d1-compare-and-swap
+  versions: immutable
+  upload_max_mib: 10
+  csrf_protection: required
+  oidc_validations: [state, nonce, pkce, issuer, audience, expiry]
+  logs_must_exclude: [passwords, session-tokens, checkout-tokens, personal-timesheet-data]
+verification:
+  source: DESIGN.md#12-受け入れテスト必須
+  required_acceptance_cases: 15
+  statuses: [PASS, FAIL, BLOCKED]
+  report: verification/acceptance-report.md
+  defects_path: verification/findings/
+  independent_signoff: required
+commands:
+  install: pnpm install --frozen-lockfile
+  lint: pnpm lint
+  typecheck: pnpm typecheck
+  test: pnpm test
+  build: pnpm build
+  e2e: pnpm exec playwright test
+restrictions:
+  - no-real-secrets-in-repository
+  - no-production-deployment-without-user-approval
+  - no-production-migrations-or-data-deletion-without-user-approval
+  - no-billing-operations-without-user-approval
+  - no-unverified-claims-of-parallel-execution
+  - no-marking-unrun-tests-as-pass

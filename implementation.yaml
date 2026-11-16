@@ -1,0 +1,45 @@
+project: timesheet-portal
+version: 1
+runtime: cloudflare-workers
+requirements:
+  excel_online: false
+  editor: local-excel-or-compatible
+  workflow: [checkout, download, local_edit, checkin, submit, approve_or_reject]
+  auth: [password, microsoft_oidc, google_oidc]
+  storage:
+    metadata: cloudflare-d1
+    files: private-cloudflare-r2
+  lock:
+    mode: exclusive-lease
+    lease_minutes: 60
+    max_extension_hours: 24
+    strategy: d1-compare-and-swap
+  upload:
+    allowed_extensions: [.xlsx]
+    max_mib: 10
+    immutable_versions: true
+  multi_tenant: false
+milestones:
+  - id: M1
+    title: scaffold-infrastructure
+    deliverables: [monorepo, wrangler, migrations, api-health, testing]
+  - id: M2
+    title: authentication
+    deliverables: [password-auth, session-management, invitations, oidc, rbac, csrf]
+  - id: M3
+    title: file-management
+    deliverables: [templates, timesheets, checkout, renew, cancel, download, checkin, versions]
+  - id: M4
+    title: submission
+    deliverables: [submit, approve, reject, assignment, audit]
+  - id: M5
+    title: hardening
+    deliverables: [concurrency-e2e, security-e2e, deployment, operations-guide]
+commands:
+  package_manager: pnpm
+  check: pnpm test
+  lint: pnpm lint
+notes:
+  - DESIGN.md is the normative architecture and acceptance test specification.
+  - A checkout lock is advisory with respect to locally downloaded copies; the server enforces upload rights.
+  - Avoid storage credentials or passwords in source control.
