@@ -7,4 +7,10 @@ describe("health endpoint", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, service: "timesheet-portal-api" });
   });
+
+  it("exposes the versioned health route", async () => {
+    const response = await app.request("/api/v1/health", undefined, { APP_ENV: "test" } as never);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, service: "timesheet-portal-api" });
+  });
 });
