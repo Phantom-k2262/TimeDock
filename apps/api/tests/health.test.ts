@@ -13,4 +13,14 @@ describe("health endpoint", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, service: "timesheet-portal-api" });
   });
+
+  it("uses an explicit fallback when the environment is absent", async () => {
+    const response = await app.request("/health", undefined, {} as never);
+    expect(await response.json()).toMatchObject({ environment: "unknown" });
+  });
+
+  it("uses the fallback on the versioned route as well", async () => {
+    const response = await app.request("/api/v1/health", undefined, {} as never);
+    expect(await response.json()).toMatchObject({ environment: "unknown" });
+  });
 });

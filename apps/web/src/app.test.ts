@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import "./main";
+
+document.body.innerHTML = '<div id="root"></div>';
+await import("./main");
 
 describe("web scaffold", () => {
   it("renders the product introduction", () => {
