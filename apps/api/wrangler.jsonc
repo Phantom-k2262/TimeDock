@@ -1,8 +1,8 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "timesheet-portal-api",
+  "name": "timedock",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-16",
+
   "d1_databases": [
     {
       "binding": "DB",
@@ -10,6 +10,16 @@
       "database_id": "cf8e5e1b-927a-4512-9145-439eada64d45"
     }
   ],
-  "r2_buckets": [{ "binding": "FILES", "bucket_name": "timesheet-portal-dev" }],
-  "vars": { "APP_ENV": "development", "MAX_UPLOAD_MIB": "10" }
+
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "timesheet-portal-files-prod"
+    }
+  ],
+
+  "vars": {
+    "APP_ENV": "production",
+    "MAX_UPLOAD_MIB": "10"
+  }
 }
