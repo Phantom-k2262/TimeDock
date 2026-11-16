@@ -157,7 +157,7 @@ stateDiagram-v2
 
 ### テーブル
 
-`users`: `id`, `email`, `display_name`, `role`, `disabled_at`, `created_at`, `updated_at`。メールアドレスの一意性は正規化後の表記に対して設定。SSO識別はメールでなくprovider subjectで行う。
+`users`: `id`, `login_id`, `display_name`, `role`, `disabled_at`, `created_at`, `updated_at`。`login_id`の一意性は正規化後の社内ログインIDに対して設定する。メールアドレスは収集・保存しない。SSO識別はメールでなくprovider subjectで行う。
 
 `password_credentials`: `user_id` (PK/FK), `hash`, `algorithm`, `params_json`, `updated_at`, `failed_attempts`, `blocked_until`。自己登録は無効、招待・管理者作成のみ。
 
@@ -165,7 +165,7 @@ stateDiagram-v2
 
 `sessions`: `id_hash` (PK), `user_id`, `created_at`, `expires_at`, `revoked_at`, `last_seen_at`; HttpOnly CookieのランダムなセッションIDは生値をDBへ保存しない。
 
-`invitations`: `id`, `email`, `role`, `token_hash`, `expires_at`, `consumed_at`, `created_by`。
+`invitations`: `id`, `login_id`, `role`, `token_hash`, `expires_at`, `consumed_at`, `created_by`。招待にもメールアドレスを使わない。
 
 `templates`: `id`, `name`, `version`, `r2_key`, `sha256`, `size_bytes`, `created_by`, `created_at`, `active`。
 
@@ -189,7 +189,7 @@ stateDiagram-v2
 
 | Method | Route | Request | Response | Auth |
 |---|---|---|---|---|
-| POST | `/auth/password/login` | `{ email, password }` | `{ user }` + session cookie | Public + rate limit |
+| POST | `/auth/password/login` | `{ loginId, password }` | `{ user }` + session cookie | Public + rate limit |
 | POST | `/auth/logout` | `{}` | 204 | Login |
 | GET | `/auth/oidc/:provider/start` | query `returnTo` (allowlisted) | 302 provider | Public |
 | GET | `/auth/oidc/:provider/callback` | code/state | 302 app + cookie | Public |

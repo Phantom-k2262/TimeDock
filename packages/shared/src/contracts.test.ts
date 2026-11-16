@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiContract, ErrorCodeSchema, ErrorResponseSchema, LockStateSchema, RoleSchema, TimesheetStatusSchema, UserSchema } from "./contracts";
+import { ApiContract, ErrorCodeSchema, ErrorResponseSchema, LockStateSchema, RoleSchema, TimesheetStatusSchema, UserSchema } from "./contracts.js";
 
 describe("shared API contracts", () => {
   it("accepts every supported role and rejects unknown roles", () => {
@@ -16,8 +16,8 @@ describe("shared API contracts", () => {
   });
 
   it("validates users and the standard error envelope", () => {
-    expect(UserSchema.parse({ id: "00000000-0000-0000-0000-000000000000", email: "user@example.com", displayName: "User", role: "employee" }).email).toBe("user@example.com");
-    expect(() => UserSchema.parse({ id: "bad", email: "bad", displayName: "", role: "employee" })).toThrow();
+    expect(UserSchema.parse({ id: "00000000-0000-0000-0000-000000000000", loginId: "user001", displayName: "User", role: "employee" }).loginId).toBe("user001");
+    expect(() => UserSchema.parse({ id: "bad", loginId: "", displayName: "", role: "employee" })).toThrow();
     expect(ErrorCodeSchema.parse("VERSION_CONFLICT")).toBe("VERSION_CONFLICT");
     expect(ErrorResponseSchema.parse({ error: { code: "NOT_FOUND", message: "missing", requestId: "req-1" } }).error.code).toBe("NOT_FOUND");
   });

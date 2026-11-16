@@ -9,6 +9,6 @@ describe("web scaffold", () => {
     expect(document.body.textContent).toContain("TIMESHEET PORTAL");
     expect(document.body.textContent).toContain("ログイン");
     expect(document.querySelector("form.login-form")).not.toBeNull();
-    expect(document.querySelector("input#email")).not.toBeNull();
+    expect(document.querySelector("input#loginId")).not.toBeNull();
   });
 });

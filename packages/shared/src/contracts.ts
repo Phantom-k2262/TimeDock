@@ -7,7 +7,7 @@ export type TimesheetStatus = z.infer<typeof TimesheetStatusSchema>;
 export const LockStateSchema = z.enum(["active", "checked_in", "cancelled", "expired", "revoked"]);
 export type LockState = z.infer<typeof LockStateSchema>;
 
-export const UserSchema = z.object({ id: z.string().uuid(), email: z.string().email(), displayName: z.string().min(1), role: RoleSchema });
+export const UserSchema = z.object({ id: z.string().uuid(), loginId: z.string().min(1), displayName: z.string().min(1), role: RoleSchema });
 export type User = z.infer<typeof UserSchema>;
 export const ErrorCodeSchema = z.enum(["VALIDATION_ERROR", "UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND", "LOCKED", "LOCK_EXPIRED", "VERSION_CONFLICT", "INVALID_STATUS", "IDEMPOTENCY_CONFLICT", "FILE_TOO_LARGE", "INVALID_FILE_TYPE", "INVALID_WORKBOOK", "RATE_LIMITED", "INTERNAL_ERROR"]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;

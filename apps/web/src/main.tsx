@@ -8,8 +8,8 @@ function LoginPage() {
     <h1>ログイン</h1>
     <p>勤務表ポータルにログインしてください。</p>
     <form className="login-form" onSubmit={(event) => event.preventDefault()}>
-      <label htmlFor="email">メールアドレス</label>
-      <input id="email" name="email" type="email" autoComplete="email" required />
+      <label htmlFor="loginId">ログインID</label>
+      <input id="loginId" name="loginId" type="text" autoComplete="username" required />
       <label htmlFor="password">パスワード</label>
       <input id="password" name="password" type="password" autoComplete="current-password" required />
       <button type="submit">ログイン</button>
