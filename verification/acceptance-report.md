@@ -1,6 +1,8 @@
 # Acceptance report
 
-Status: BLOCKED — G0 scaffold only; no application acceptance tests have been executed.
+Status: BLOCKED — G0 scaffold only; application acceptance scenarios are not implemented yet.
+
+G0 evidence: workspace typecheck, unit smoke tests, and build pass. This does not constitute a PASS for the 15 application acceptance cases.
 
 | ID | Result | Command / reproduction | Evidence | Owner | Fix verification |
 |---:|---|---|---|---|---|
