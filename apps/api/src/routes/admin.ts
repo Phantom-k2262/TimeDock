@@ -103,7 +103,7 @@ adminRoutes.post("/users", async (c) => {
   if (targetTenants.results.length !== tenantIds.length) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
   const tenantId = tenantIds[0];
   await c.env.DB.batch([
-    c.env.DB.prepare("INSERT INTO users (id, login_id, display_name, role, account_type, primary_tenant_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)").bind(id, parsed.data.loginId, parsed.data.displayName, parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee", parsed.data.role, tenantId, now),
+    c.env.DB.prepare("INSERT INTO users (id, login_id, display_name, role, account_type, primary_tenant_id, two_factor_required, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)").bind(id, parsed.data.loginId, parsed.data.displayName, parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee", parsed.data.role, tenantId, parsed.data.role === "system_admin" ? 0 : parsed.data.twoFactorRequired === false ? 0 : 1, now),
     c.env.DB.prepare("INSERT INTO password_credentials (user_id, hash, algorithm, params_json, updated_at) VALUES (?1, ?2, 'pbkdf2-sha256', '{\"iterations\":100000,\"hash\":\"SHA-256\",\"keyLength\":256}', ?3)").bind(id, await hashPassword(parsed.data.password), now),
     ...tenantIds.map((assignedTenantId) => c.env.DB.prepare("INSERT INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(assignedTenantId, id, now)),
   ]);
