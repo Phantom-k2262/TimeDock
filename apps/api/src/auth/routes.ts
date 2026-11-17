@@ -24,14 +24,25 @@ authRoutes.post("/password/login", async (c) => {
   if (!parsed.success) return error(c, 400, "VALIDATION_ERROR", "ログインIDまたはパスワードが正しくありません");
   if (!c.env.DB) return error(c, 500, "INTERNAL_ERROR", "認証サービスを利用できません");
 
-  const result = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, u.two_factor_required, u.two_factor_enrolled_at, u.suspended_at, p.hash FROM users u JOIN password_credentials p ON p.user_id = u.id WHERE u.login_id = ?1 AND u.disabled_at IS NULL").bind(parsed.data.loginId).first<Record<string, unknown>>();
+  const result = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, u.two_factor_required, u.two_factor_enrolled_at, u.suspended_at, p.hash, p.failed_attempts, p.blocked_until FROM users u JOIN password_credentials p ON p.user_id = u.id WHERE u.login_id = ?1 AND u.disabled_at IS NULL").bind(parsed.data.loginId).first<Record<string, unknown>>();
+  const nowIso = new Date().toISOString();
+  const blockedUntil = result?.blocked_until ? new Date(String(result.blocked_until)) : null;
+  if (blockedUntil && blockedUntil.getTime() > Date.now()) return error(c, 401, "UNAUTHENTICATED", "ログインIDまたはパスワードが正しくありません");
   const valid = result ? await verifyPassword(parsed.data.password, String(result.hash)) : false;
-  if (!valid || !result) return error(c, 401, "UNAUTHENTICATED", "ログインIDまたはパスワードが正しくありません");
+  if (!valid || !result) {
+    if (result) {
+      const failedAttempts = Number(result.failed_attempts ?? 0) + 1;
+      const nextBlockedUntil = failedAttempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000).toISOString() : null;
+      await c.env.DB.prepare("UPDATE password_credentials SET failed_attempts = ?1, blocked_until = ?2, updated_at = ?3 WHERE user_id = ?4").bind(nextBlockedUntil ? 0 : failedAttempts, nextBlockedUntil, nowIso, result.id).run();
+    }
+    return error(c, 401, "UNAUTHENTICATED", "ログインIDまたはパスワードが正しくありません");
+  }
 
   const user = userFromRow(result);
   const sessionId = createSessionId();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + sessionMaxAge() * 1000).toISOString();
+  await c.env.DB.prepare("UPDATE password_credentials SET failed_attempts = 0, blocked_until = NULL, updated_at = ?1 WHERE user_id = ?2").bind(nowIso, user.id).run();
   await c.env.DB.prepare("INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at, two_factor_verified_at) VALUES (?1, ?2, ?3, ?4, ?3, ?5)").bind(await hashSessionId(sessionId), user.id, now.toISOString(), expiresAt, user.role === "system_admin" || result.two_factor_required === 0 ? now.toISOString() : null).run();
   c.header("Set-Cookie", sessionCookie(sessionId));
   return c.json({ user, twoFactor: { required: user.role !== "system_admin" && result.two_factor_required !== 0, enrolled: Boolean(result.two_factor_enrolled_at), verified: user.role === "system_admin" || result.two_factor_required === 0 } });

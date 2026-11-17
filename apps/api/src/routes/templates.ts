@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { canManageFiles, requireFileManager } from "../auth/guard";
+import { safeFileName, validateUpload } from "../files/validation";
 
 type TemplateBindings = { DB: D1Database; FILES: R2Bucket; APP_ENV: string; MAX_UPLOAD_MIB: string };
 export const templateRoutes = new Hono<{ Bindings: TemplateBindings }>();
@@ -41,9 +42,11 @@ templateRoutes.post("/", async (c) => {
   const form = await c.req.raw.formData().catch(() => null);
   const file = form?.get("file");
   const workspaceId = typeof form?.get("workspaceId") === "string" ? String(form?.get("workspaceId")) : "";
-  if (!(file instanceof File) || !file.name) return error(c, 400, "VALIDATION_ERROR", "ファイルを選択してください");
+  if (!(file instanceof File)) return error(c, 400, "VALIDATION_ERROR", "ファイルを選択してください");
   const maxBytes = Number(c.env.MAX_UPLOAD_MIB ?? 10) * 1024 * 1024;
-  if (file.size > maxBytes) return error(c, 413, "FILE_TOO_LARGE", "ファイルサイズが上限を超えています");
+  const validationError = await validateUpload(file, maxBytes, true);
+  if (validationError === "ファイルサイズが上限を超えています") return error(c, 413, "FILE_TOO_LARGE", validationError);
+  if (validationError) return error(c, 400, "VALIDATION_ERROR", validationError);
   let folderId: string | null = null;
   if (workspaceId) {
     const workspace = await c.env.DB.prepare("SELECT id FROM workspaces WHERE id = ?1 AND deleted_at IS NULL").bind(workspaceId).first();
@@ -55,10 +58,11 @@ templateRoutes.post("/", async (c) => {
   const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const key = `templates/${id}/${file.name}`;
+  const fileName = safeFileName(file.name);
+  const key = `templates/${id}/${fileName}`;
   await c.env.FILES.put(key, data, { httpMetadata: { contentType: file.type || "application/octet-stream" } });
-  await c.env.DB.prepare("INSERT INTO templates (id, name, version, r2_key, sha256, size_bytes, created_by, created_at, active, folder_id, content_type) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)").bind(id, file.name, key, sha256, file.size, current.id, now, folderId, file.type || "application/octet-stream").run();
-  return c.json({ template: { id, name: file.name, version: 1, sizeBytes: file.size, workspaceId: workspaceId || null } }, 201);
+  await c.env.DB.prepare("INSERT INTO templates (id, name, version, r2_key, sha256, size_bytes, created_by, created_at, active, folder_id, content_type) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)").bind(id, fileName, key, sha256, file.size, current.id, now, folderId, file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").run();
+  return c.json({ template: { id, name: fileName, version: 1, sizeBytes: file.size, workspaceId: workspaceId || null } }, 201);
 });
 
 templateRoutes.patch("/:id", async (c) => {
@@ -89,5 +93,5 @@ templateRoutes.get("/:id/download", async (c) => {
   if (!row) return error(c, 404, "NOT_FOUND", "テンプレートが見つかりません");
   const object = await c.env.FILES.get(row.r2_key);
   if (!object) return error(c, 404, "NOT_FOUND", "ファイルが見つかりません");
-  return new Response(object.body, { headers: { "Content-Type": row.content_type, "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(row.name)}` } });
+  return new Response(object.body, { headers: { "Content-Type": row.content_type, "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(row.name)}`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 });
