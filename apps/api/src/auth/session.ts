@@ -1,7 +1,7 @@
 const SESSION_COOKIE = "timesheet_session";
 const SESSION_MAX_AGE = 60 * 60 * 8;
 
-export type SessionUser = { id: string; loginId: string; displayName: string; role: "system_admin" | "system_operator" | "verifier" | "member" };
+export type SessionUser = { id: string; loginId: string; displayName: string; role: "system_admin" | "system_operator" | "verifier" | "member"; tenantId: string };
 
 function bytesToHex(bytes: Uint8Array) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");

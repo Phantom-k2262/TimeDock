@@ -23,6 +23,12 @@ a { color: inherit; }
 .new-button { width: 100%; box-shadow: 0 3px 8px #3157d530; }
 .secondary-button { background: #eef1f6; color: #334155; }
 .side-nav { display: grid; gap: .25rem; }
+.tenant-sidebar { display: grid; gap: .55rem; max-height: 42vh; overflow: auto; }
+.tenant-sidebar details { border: 1px solid #e5e9f0; border-radius: .5rem; background: #fbfcff; }
+.tenant-sidebar summary { padding: .65rem .7rem; color: #263653; cursor: pointer; font-weight: 700; }
+.tenant-links { display: grid; gap: .15rem; padding: 0 .45rem .45rem; }
+.tenant-links a { padding: .45rem .5rem; border-radius: .35rem; color: #526079; font-size: .8rem; text-decoration: none; }
+.tenant-links a:hover { color: #3157d5; background: #edf1ff; }
 .side-nav a { display: flex; align-items: center; gap: .7rem; padding: .7rem .8rem; border-radius: .45rem; color: #526079; text-decoration: none; }
 .side-nav a:hover, .side-nav a.active { background: #edf1ff; color: #3157d5; font-weight: 700; }
 .sidebar-foot { margin-top: auto; color: #637087; font-size: .8rem; }
