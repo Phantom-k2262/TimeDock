@@ -180,7 +180,7 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 @media (max-width: 400px) {
   .toolbar { min-width: 0; }
   .toolbar > * { width: 100%; min-width: 0; max-width: 100%; }
-  .toolbar select { width: 100%; min-width: 0; }
+  .toolbar select { width: 1px; min-width: 0; flex: 1 1 auto; }
   .file-list-head, .file-row { grid-template-columns: minmax(0, 1fr); }
   .file-row .row-action { justify-content: flex-start; }
   .file-name { gap: .35rem; }
