@@ -24,7 +24,7 @@ const templatePatterns: Record<string, string> = {
 async function attendanceTemplate(c: any, format: string) {
   const pattern = templatePatterns[format];
   if (!pattern) return null;
-  const row = await c.env.DB.prepare("SELECT id, name, r2_key FROM templates WHERE active = 1 AND name LIKE ?1 ORDER BY created_at DESC LIMIT 1").bind(pattern).first() as { id: string; name: string; r2_key: string } | null;
+  const row = await c.env.DB.prepare("SELECT id, name, r2_key FROM templates WHERE active = 1 AND (export_format = ?1 OR (export_format IS NULL AND name LIKE ?2)) ORDER BY created_at DESC LIMIT 1").bind(format, pattern).first() as { id: string; name: string; r2_key: string } | null;
   if (!row) return null;
   const object = await c.env.FILES.get(row.r2_key);
   return object ? { ...row, data: new Uint8Array(await object.arrayBuffer()) } : null;

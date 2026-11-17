@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { AttendanceExportFormatSchema } from "@timesheet/shared";
 import { canManageFiles, requireFileManager } from "../auth/guard";
 import { safeFileName, validateUpload } from "../files/validation";
 
@@ -32,8 +33,8 @@ templateRoutes.get("/", async (c) => {
   const values: string[] = [];
   if (workspaceId) { clauses.push("w.id = ?"); values.push(workspaceId); }
   if (tenantId) { clauses.push("w.tenant_id = ?"); values.push(tenantId); }
-  const rows = await c.env.DB.prepare(`SELECT t.id, t.name, t.version, t.size_bytes, t.content_type, t.created_at, f.workspace_id, w.name AS workspace_name, w.tenant_id, tn.name AS tenant_name FROM templates t LEFT JOIN folders f ON f.id = t.folder_id LEFT JOIN workspaces w ON w.id = f.workspace_id LEFT JOIN tenants tn ON tn.id = w.tenant_id WHERE ${clauses.join(" AND ")} ORDER BY t.created_at DESC`).bind(...values).all<Record<string, unknown>>();
-  return c.json({ templates: rows.results.map((row) => ({ id: row.id, name: row.name, version: Number(row.version), sizeBytes: Number(row.size_bytes), contentType: row.content_type, createdAt: row.created_at, workspaceId: row.workspace_id ?? null, workspaceName: row.workspace_name ?? null, tenantId: row.tenant_id ?? null, tenantName: row.tenant_name ?? null })) });
+  const rows = await c.env.DB.prepare(`SELECT t.id, t.name, t.version, t.size_bytes, t.content_type, t.export_format, t.created_at, f.workspace_id, w.name AS workspace_name, w.tenant_id, tn.name AS tenant_name FROM templates t LEFT JOIN folders f ON f.id = t.folder_id LEFT JOIN workspaces w ON w.id = f.workspace_id LEFT JOIN tenants tn ON tn.id = w.tenant_id WHERE ${clauses.join(" AND ")} ORDER BY t.created_at DESC`).bind(...values).all<Record<string, unknown>>();
+  return c.json({ templates: rows.results.map((row) => ({ id: row.id, name: row.name, format: row.export_format ?? null, version: Number(row.version), sizeBytes: Number(row.size_bytes), contentType: row.content_type, createdAt: row.created_at, workspaceId: row.workspace_id ?? null, workspaceName: row.workspace_name ?? null, tenantId: row.tenant_id ?? null, tenantName: row.tenant_name ?? null })) });
 });
 
 templateRoutes.post("/", async (c) => {
@@ -41,6 +42,9 @@ templateRoutes.post("/", async (c) => {
   if (!current) return error(c, 403, "FORBIDDEN", "テンプレート管理権限が必要です");
   const form = await c.req.raw.formData().catch(() => null);
   const file = form?.get("file");
+  const formatValue = form?.get("format");
+  const parsedFormat = AttendanceExportFormatSchema.safeParse(typeof formatValue === "string" ? formatValue : "");
+  if (!parsedFormat.success) return error(c, 400, "VALIDATION_ERROR", "テンプレート形式を選択してください");
   const workspaceId = typeof form?.get("workspaceId") === "string" ? String(form?.get("workspaceId")) : "";
   if (!(file instanceof File)) return error(c, 400, "VALIDATION_ERROR", "ファイルを選択してください");
   const maxBytes = Number(c.env.MAX_UPLOAD_MIB ?? 10) * 1024 * 1024;
@@ -61,8 +65,8 @@ templateRoutes.post("/", async (c) => {
   const fileName = safeFileName(file.name);
   const key = `templates/${id}/${fileName}`;
   await c.env.FILES.put(key, data, { httpMetadata: { contentType: file.type || "application/octet-stream" } });
-  await c.env.DB.prepare("INSERT INTO templates (id, name, version, r2_key, sha256, size_bytes, created_by, created_at, active, folder_id, content_type) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)").bind(id, fileName, key, sha256, file.size, current.id, now, folderId, file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").run();
-  return c.json({ template: { id, name: fileName, version: 1, sizeBytes: file.size, workspaceId: workspaceId || null } }, 201);
+  await c.env.DB.prepare("INSERT INTO templates (id, name, version, r2_key, sha256, size_bytes, created_by, created_at, active, folder_id, content_type, export_format) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10)").bind(id, fileName, key, sha256, file.size, current.id, now, folderId, file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", parsedFormat.data).run();
+  return c.json({ template: { id, name: fileName, format: parsedFormat.data, version: 1, sizeBytes: file.size, workspaceId: workspaceId || null } }, 201);
 });
 
 templateRoutes.patch("/:id", async (c) => {
