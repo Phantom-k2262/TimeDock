@@ -1,5 +1,7 @@
 const encoder = new TextEncoder();
-const ITERATIONS = 210_000;
+// Cloudflare Workers CPU limits make a 210k PBKDF2 derivation unreliable.
+// Keep the encoded iteration count in each hash so future upgrades can be gradual.
+const ITERATIONS = 100_000;
 
 function toBase64(bytes: Uint8Array) {
   return btoa(String.fromCharCode(...bytes));

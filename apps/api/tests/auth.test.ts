@@ -22,7 +22,7 @@ function database(loginRow: Record<string, unknown> | null = { ...userRow, hash:
 describe("password hashing", () => {
   it("hashes and verifies without storing the password", async () => {
     const hash = await hashPassword("correct horse battery staple");
-    expect(hash).toMatch(/^pbkdf2-sha256\$210000\$/);
+    expect(hash).toMatch(/^pbkdf2-sha256\$100000\$/);
     expect(hash).not.toContain("correct horse");
     expect(await verifyPassword("correct horse battery staple", hash)).toBe(true);
     expect(await verifyPassword("wrong password", hash)).toBe(false);
