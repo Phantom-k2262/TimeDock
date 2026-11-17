@@ -40,6 +40,13 @@ export function generateTotpSecret() {
   return encodeBase32(crypto.getRandomValues(new Uint8Array(20)));
 }
 
+export function generateRecoveryCodes(count = 8) {
+  return Array.from({ length: count }, () => {
+    const raw = encodeBase32(crypto.getRandomValues(new Uint8Array(8))).slice(0, 12);
+    return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`;
+  });
+}
+
 async function generateCode(secret: string, counter: number) {
   const key = await crypto.subtle.importKey("raw", decodeBase32(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
   const message = new ArrayBuffer(8);

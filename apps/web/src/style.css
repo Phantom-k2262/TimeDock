@@ -100,6 +100,9 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 .two-factor-uri { margin-top: 1rem; color: #526079; font-size: .85rem; }
 .two-factor-uri summary { cursor: pointer; }
 .two-factor-uri code { margin-top: .5rem; font-size: .72rem; letter-spacing: 0; }
+.recovery-code-panel { margin-top: 1rem; padding: .8rem; background: #fffaf0; border: 1px solid #f1dfae; border-radius: .45rem; }
+.recovery-code-panel p { margin: .35rem 0 .6rem; font-size: .82rem; }
+.recovery-code-panel code { display: block; padding: .65rem; color: #263653; background: #fff; border: 1px solid #e5e9f0; border-radius: .4rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
 .form-panel, .panel { box-sizing: border-box; min-width: 0; }
 .form-panel input, .form-panel textarea, .form-panel select { box-sizing: border-box; max-width: 100%; min-width: 0; }
 .template-upload-panel { display: grid; gap: 1rem; max-width: 760px; }

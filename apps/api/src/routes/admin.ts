@@ -167,6 +167,7 @@ adminRoutes.post("/users/:id/2fa/reset", async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE users SET two_factor_secret = NULL, two_factor_enrolled_at = NULL, two_factor_required = 1, updated_at = ?1 WHERE id = ?2").bind(now, targetId),
     c.env.DB.prepare("UPDATE sessions SET revoked_at = COALESCE(revoked_at, ?1) WHERE user_id = ?2").bind(now, targetId),
+    c.env.DB.prepare("DELETE FROM two_factor_recovery_codes WHERE user_id = ?1").bind(targetId),
   ]);
   return c.json({ ok: true, required: true });
 });
