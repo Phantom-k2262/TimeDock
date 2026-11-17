@@ -132,9 +132,31 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 .file-action-menu-list a:hover, .file-action-menu-list label:hover, .file-action-menu-list button:hover { background: #f3f5f9; }
 .file-action-menu-list .danger-button { color: #b42318; }
 .permission-menu { min-width: 240px; max-width: min(320px, calc(100vw - 2rem)); }
+.toolbar .upload-button { display: none; }
 .permission-menu strong { display: block; padding: .45rem .65rem .3rem; color: #263653; }
 .permission-user-list { display: grid; gap: .35rem; max-height: 12rem; overflow: auto; padding: .4rem 0; border-top: 1px solid #eef0f4; }
 .workspace-permission-menu { margin-left: 0; }
+.month-picker { display: grid; gap: .35rem; color: #334155; font-size: .8rem; font-weight: 700; }
+.month-picker input { padding: .55rem .65rem; border: 1px solid #cbd3e1; border-radius: .45rem; background: #fff; }
+.common-profile-panel { margin-bottom: 1rem; }
+.common-profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .75rem; }
+.common-profile-grid label, .attendance-entry-form label, .report-form label { display: grid; gap: .35rem; color: #334155; font-size: .85rem; font-weight: 700; }
+.common-profile-grid input, .attendance-entry-form input, .attendance-entry-form select, .report-form textarea { min-width: 0; padding: .65rem .7rem; border: 1px solid #cbd3e1; border-radius: .45rem; background: #fff; }
+.attendance-tabs { display: flex; flex-wrap: wrap; gap: .45rem; margin: 1rem 0; }
+.attendance-tabs button { padding: .65rem .85rem; border: 1px solid #dbe1ea; border-radius: .45rem; color: #526079; background: #fff; font-weight: 700; }
+.attendance-tabs button.active { border-color: #3157d5; color: #3157d5; background: #edf1ff; }
+.attendance-panel { display: grid; gap: 1rem; }
+.attendance-entry-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .75rem; align-items: end; }
+.attendance-entry-form button { min-height: 2.7rem; }
+.attendance-table { display: grid; overflow-x: auto; border: 1px solid #e5e9f0; border-radius: .5rem; }
+.attendance-table-head, .attendance-table-row { display: grid; grid-template-columns: 1fr 1.5fr .8fr 1.4fr; gap: .75rem; min-width: 600px; padding: .75rem; }
+.attendance-table-head { color: #8490a3; background: #fafbfc; font-size: .8rem; font-weight: 700; }
+.attendance-table-row { border-top: 1px solid #eef0f4; color: #526079; }
+.attendance-list-row { display: grid; grid-template-columns: 1.2fr 1fr 2fr; gap: .75rem; padding: .75rem 0; border-top: 1px solid #eef0f4; color: #526079; }
+.attendance-list-row small { overflow-wrap: anywhere; }
+.report-form { display: grid; gap: 1rem; max-width: 760px; }
+.report-form textarea { resize: vertical; line-height: 1.6; }
+.attendance-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .6rem; margin-top: 1rem; }
 .tenant-assignment { display: grid; gap: .45rem; margin: 0; padding: .75rem; border: 1px solid #cbd3e1; border-radius: .45rem; }
 .tenant-assignment legend { padding: 0 .25rem; color: #334155; font-weight: 700; }
 .tenant-assignment label { display: flex; grid-template-columns: none; align-items: center; gap: .45rem; font-weight: 500; }
@@ -142,6 +164,7 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 .checkbox-field input { width: auto; }
 .checkbox-field.compact { margin: 0; color: #526079; font-size: .8rem; white-space: nowrap; }
 @media (max-width: 700px) { .list-heading, .section-heading { flex-direction: column; }.list-tools { justify-content: stretch; width: 100%; }.list-tools > * { flex: 1 1 130px; }.user-list-row { align-items: flex-start; flex-wrap: wrap; }.user-actions { width: 100%; justify-content: start; }.workspace-template-row { align-items: flex-start; flex-wrap: wrap; }.workspace-template-row .secondary-button { width: 100%; text-align: center; } }
+@media (max-width: 560px) { .attendance-actions > *, .attendance-actions button { width: 100%; }.attendance-list-row { grid-template-columns: 1fr; gap: .25rem; } }
 
 /* Shared layout invariants: allow content to determine height and let dense controls wrap. */
 .page-header p, .section-heading p, .list-heading p { max-width: 70ch; overflow-wrap: anywhere; }

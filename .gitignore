@@ -6,6 +6,7 @@ dist/
 .env
 .env.*
 !.env.example
+.book/
 coverage/
 playwright-report/
 test-results/

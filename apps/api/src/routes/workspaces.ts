@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { FolderPermissionModeSchema, WorkspaceCreateRequestSchema } from "@timesheet/shared";
 import { getSessionUser, requireFileManager } from "../auth/guard";
-import { safeFileName, validateUpload } from "../files/validation";
 
 type WorkspaceBindings = { DB: D1Database; FILES: R2Bucket; APP_ENV: string; MAX_UPLOAD_MIB: string };
 export const workspaceRoutes = new Hono<{ Bindings: WorkspaceBindings }>();
@@ -128,30 +127,7 @@ workspaceRoutes.get("/:id/files", async (c) => {
 });
 
 workspaceRoutes.post("/:id/files", async (c) => {
-  const { current, allowed } = await workspaceAccess(c, c.req.param("id"));
-  if (!current) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
-  if (!allowed || current.role === "system_operator") return error(c, 403, "FORBIDDEN", "ワークスペース追加権限がありません");
-  const form = await c.req.raw.formData().catch(() => null);
-  const file = form?.get("file");
-  const category = typeof form?.get("category") === "string" ? String(form?.get("category")) : "other";
-  if (!(file instanceof File)) return error(c, 400, "VALIDATION_ERROR", "ファイルを選択してください");
-  if (!["timesheet", "expense", "receipt", "other"].includes(category)) return error(c, 400, "VALIDATION_ERROR", "ファイル種別を確認してください");
-  const maxBytes = Number(c.env.MAX_UPLOAD_MIB ?? 10) * 1024 * 1024;
-  const validationError = await validateUpload(file, maxBytes);
-  if (validationError === "ファイルサイズが上限を超えています") return error(c, 413, "FILE_TOO_LARGE", validationError);
-  if (validationError) return error(c, 400, "VALIDATION_ERROR", validationError);
-  const folder = await c.env.DB.prepare("SELECT f.id FROM folders f JOIN workspaces w ON w.id = f.workspace_id WHERE f.workspace_id = ?1 AND f.read_only = 0 AND (w.sharing_mode = 'shared_box' OR ?2 IN ('system_admin', 'system_operator', 'verifier') OR f.owner_user_id = ?3) ORDER BY CASE WHEN f.owner_user_id = ?3 THEN 0 ELSE 1 END LIMIT 1").bind(c.req.param("id"), current.role, current.id).first<{ id: string }>();
-  if (!folder) return error(c, 400, "VALIDATION_ERROR", "追加可能なフォルダがありません");
-  const data = new Uint8Array(await file.arrayBuffer());
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
-  const fileName = safeFileName(file.name);
-  const key = `workspaces/${c.req.param("id")}/${id}/${fileName}`;
-  await c.env.FILES.put(key, data, { httpMetadata: { contentType: file.type || "application/octet-stream" } });
-  await c.env.DB.prepare("INSERT INTO documents (id, folder_id, owner_user_id, name, category, r2_key, sha256, size_bytes, content_type, uploaded_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?3, ?10)").bind(id, folder.id, current.id, fileName, category, key, sha256, file.size, file.type || "application/octet-stream", now).run();
-  return c.json({ file: { id, name: fileName, category, sizeBytes: file.size } }, 201);
+  return error(c, 403, "FORBIDDEN", "セキュリティ上、ユーザーファイルのアップロードは無効です。勤怠入力画面を使用してください");
 });
 
 workspaceRoutes.delete("/:id/files/:fileId", async (c) => {
