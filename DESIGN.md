@@ -70,8 +70,9 @@ MVPはWorkers経由の認証済みファイル転送とする。サイズ上限�
 | 操作 | employee(owner) | approver(assigned) | admin |
 |---|---|---|---|
 | 自分の一覧・閲覧 | Yes | - | Yes |
-| 自分のチェックアウト/チェックイン | draft/rejectedのみ | No | 監査付き解除のみ |
+| 自分のフォルダへの勤務表アップロード・更新 | Yes | No | 監査付き操作 |
 | 自分の提出 | Yes | No | No（原則） |
+| テンプレート配布フォルダの閲覧・ダウンロード | Yes | Yes | Yes |
 | 割当先勤務表の閲覧 | No | Yes | Yes |
 | 承認/差戻し | No | submittedのみ | Yes |
 | テンプレート管理 | No | No | Yes |
@@ -113,11 +114,11 @@ stateDiagram-v2
 
 ## 5. 主要ユーザーフロー
 
-### 5.1 勤務表作成
-1. 社員が対象月とテンプレートを指定する。
-2. APIが対象ユーザー・対象月の重複を検証する。
-3. テンプレートのバイナリをR2から新しい**不変オブジェクトキー**に複製する。
-4. D1に `timesheets` と初期 `file_versions` を登録する。
+### 5.1 勤務表アップロード
+1. 管理者がテンプレート配布フォルダへ`.xlsx`を配置する。社員には読み取り専用で公開する。
+2. 社員がテンプレートをダウンロードし、自分の端末で記入する。
+3. 社員が自分の個人フォルダへ対象月と`.xlsx`をアップロードする。APIが対象ユーザー・対象月の重複とフォルダ書込み権限を検証する。
+4. D1に `timesheets` と初期 `file_versions`を登録し、R2へ**不変オブジェクトキー**で保存する。
 5. 失敗時は未参照オブジェクトの削除対象としてマークする（R2とD1間の分散トランザクションは存在しない）。
 
 ### 5.2 チェックアウト
@@ -167,9 +168,13 @@ stateDiagram-v2
 
 `invitations`: `id`, `login_id`, `role`, `token_hash`, `expires_at`, `consumed_at`, `created_by`。招待にもメールアドレスを使わない。
 
-`templates`: `id`, `name`, `version`, `r2_key`, `sha256`, `size_bytes`, `created_by`, `created_at`, `active`。
+`folders`: `id`, `name`, `parent_id`, `kind` (`template_library`/`personal`/`shared`), `owner_user_id`, `read_only`, `created_by`, `created_at`, `updated_at`。テンプレート配布フォルダは`read_only=1`とし、社員は閲覧・ダウンロードのみ許可する。
 
-`timesheets`: `id`, `user_id`, `target_month` ('YYYY-MM'), `template_id`, `status`, `current_version`, `current_r2_key`, `current_sha256`, `lock_id`, `lock_user_id`, `lock_token_hash`, `lock_base_version`, `lock_expires_at`, `lock_revoked_at`, `submitted_version`, `approved_version`, `created_at`, `updated_at`; UNIQUE(`user_id`, `target_month`)。1人1か月1勤務表のMVP仕様。
+`folder_permissions`: `id`, `folder_id`, `user_id`または`role`, `can_read`, `can_write`, `created_at`。権限はフォルダ単位で管理し、UIの表示だけでなくAPIの全ファイル操作で検証する。
+
+`templates`: `id`, `folder_id`, `name`, `version`, `r2_key`, `sha256`, `size_bytes`, `created_by`, `created_at`, `active`。管理者のみテンプレート配布フォルダへ追加・更新できる。
+
+`timesheets`: `id`, `folder_id`, `user_id`, `target_month` ('YYYY-MM'), `template_id`, `status`, `current_version`, `current_r2_key`, `current_sha256`, `lock_id`, `lock_user_id`, `lock_token_hash`, `lock_base_version`, `lock_expires_at`, `lock_revoked_at`, `submitted_version`, `approved_version`, `created_at`, `updated_at`; UNIQUE(`user_id`, `target_month`)。1人1か月1勤務表のMVP仕様。
 
 `file_versions`: `id`, `timesheet_id`, `version` (INT), `r2_key`, `sha256`, `size_bytes`, `created_by`, `created_at`; UNIQUE(`timesheet_id`,`version`), UNIQUE(`r2_key`)。
 
@@ -196,7 +201,7 @@ stateDiagram-v2
 | GET | `/me` | - | user info | Login |
 | POST | `/auth/invitations/accept` | `{ token, password? }` | session or success | Invite |
 | GET | `/timesheets` | query month/status | paginated items | Owner/Reviewer |
-| POST | `/timesheets` | `{ targetMonth, templateId }` | `201` item | Employee |
+| POST | `/timesheets` | multipart `{ targetMonth, file }` | `201` item | Employee（自分の個人フォルダ） |
 | GET | `/timesheets/:id` | - | item/version/lock metadata | RBAC |
 | POST | `/timesheets/:id/checkout` | `{ expectedVersion }` | lock token, expiry | Owner, draft/rejected |
 | POST | `/timesheets/:id/checkout/renew` | `{ lockId, checkoutToken }` | new expiry | Lock owner |
@@ -210,7 +215,7 @@ stateDiagram-v2
 | GET | `/timesheets/:id/history` | - | audit trail | RBAC |
 | POST | `/admin/timesheets/:id/revoke-lock` | `{ reason }` | revoked | Admin |
 | GET/POST | `/admin/users` | list/create invite | items | Admin |
-| GET/POST | `/admin/templates` | list/upload | items | Admin |
+| GET/POST | `/admin/templates` | list/upload | items | GET: Login / POST: Admin |
 
 ### Status codes / error contract
 - `400 VALIDATION_ERROR`
@@ -273,7 +278,7 @@ R2へ保存した後、`current_version=expectedVersion` と `lock_id=lockId` �
 
 - `/login`: ログインID+パスワード、Microsoft/Googleログイン（メールアドレスは収集しない）
 - `/dashboard`: SharePoint風のマイドキュメント、ファイル一覧、状態・更新日時・サイズ、検索・状態フィルター
-- `/timesheets/new`: テンプレート選択・対象月作成
+- `/timesheets/new`: 対象月・`.xlsx`を自分の個人フォルダへアップロード
 - `/timesheets/:id`: ファイル情報、ダウンロード、編集開始、アップロード、提出操作
 - `/timesheets/:id/history`: 版履歴、提出履歴、承認履歴
 - `/approvals`: 割当社員の提出済み勤務表一覧
@@ -282,6 +287,8 @@ R2へ保存した後、`current_version=expectedVersion` と `lock_id=lockId` �
 - `/admin/audit`: 操作履歴
 
 ユーザー向け画面では内部用語の「チェックアウト」「チェックイン」「編集権を取得」を避け、「編集する」「ファイルをダウンロード」「編集済みファイルをアップロード」「提出する」と表示する。編集開始後は「①ファイルをダウンロード ②Excelで編集・保存 ③編集済みファイルをアップロード ④提出する」をステップ表示する。ロック期限・残り時間と延長操作は、必要な場合だけ補助情報として表示する。ブラウザを閉じても編集ファイルはローカルに残るため、再開時の扱いをユーザーへ説明する。ロック再発行は既存ロックと厳密に紐付け、本人認証済みの場合のみ許可。
+
+管理者のテンプレート配布フォルダは読み取り専用として表示し、社員の個人フォルダには「勤務表をアップロード」ボタンを表示する。
 
 ## 10. リポジトリ構成
 

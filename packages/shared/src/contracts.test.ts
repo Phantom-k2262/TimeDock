@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiContract, ErrorCodeSchema, ErrorResponseSchema, LockStateSchema, RoleSchema, TimesheetStatusSchema, UserSchema } from "./contracts.js";
+import { ApiContract, ErrorCodeSchema, ErrorResponseSchema, FolderPermissionSchema, FolderSchema, LockStateSchema, RoleSchema, TimesheetStatusSchema, UserSchema } from "./contracts.js";
 
 describe("shared API contracts", () => {
   it("accepts every supported role and rejects unknown roles", () => {
@@ -24,5 +24,11 @@ describe("shared API contracts", () => {
 
   it("freezes the initial route contract", () => {
     expect(ApiContract).toEqual({ prefix: "/api/v1", checkout: "/timesheets/:id/checkout", checkin: "/timesheets/:id/checkin", submit: "/timesheets/:id/submit" });
+  });
+
+  it("models read-only template libraries and personal folders", () => {
+    const folder = FolderSchema.parse({ id: "00000000-0000-0000-0000-000000000001", name: "Templates", kind: "template_library", ownerUserId: null, readOnly: true });
+    expect(folder.readOnly).toBe(true);
+    expect(FolderPermissionSchema.parse({ folderId: folder.id, userId: null, role: "employee", canRead: true, canWrite: false }).canWrite).toBe(false);
   });
 });
