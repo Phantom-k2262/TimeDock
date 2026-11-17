@@ -12,7 +12,7 @@ function error(c: any, status: 400 | 401 | 403 | 404 | 409 | 500, code: string, 
 
 function user(row: Record<string, unknown>) {
   const legacyRole = row.role === "admin" ? "system_admin" : row.role === "approver" ? "verifier" : "member";
-  return { id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole, tenantId: row.primary_tenant_id, tenantName: row.tenant_name, disabledAt: row.disabled_at ?? null, suspendedAt: row.suspended_at ?? null, twoFactorRequired: row.two_factor_required !== 0, twoFactorEnrolled: Boolean(row.two_factor_enrolled_at) };
+  return { id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole, tenantId: row.primary_tenant_id, tenantName: row.tenant_name, tenantIds: row.tenant_ids ? String(row.tenant_ids).split(",") : [], tenantNames: row.tenant_names ? String(row.tenant_names).split("、") : [], disabledAt: row.disabled_at ?? null, suspendedAt: row.suspended_at ?? null, twoFactorRequired: row.two_factor_required !== 0, twoFactorEnrolled: Boolean(row.two_factor_enrolled_at) };
 }
 
 function tenant(row: Record<string, unknown>) {
@@ -52,7 +52,7 @@ adminRoutes.get("/users", async (c) => {
   if (status === "active") where.push("u.disabled_at IS NULL AND u.suspended_at IS NULL");
   if (status === "suspended") where.push("u.suspended_at IS NOT NULL AND u.disabled_at IS NULL");
   if (status === "disabled") where.push("u.disabled_at IS NOT NULL");
-  const rows = await c.env.DB.prepare(`SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, t.name AS tenant_name, u.disabled_at, u.suspended_at, u.two_factor_required, u.two_factor_enrolled_at FROM users u LEFT JOIN tenants t ON t.id = u.primary_tenant_id WHERE ${where.join(" AND ")} ORDER BY u.${sort} ${order}`).bind(...values).all<Record<string, unknown>>();
+  const rows = await c.env.DB.prepare(`SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, t.name AS tenant_name, GROUP_CONCAT(tm.tenant_id) AS tenant_ids, GROUP_CONCAT(tall.name, '、') AS tenant_names, u.disabled_at, u.suspended_at, u.two_factor_required, u.two_factor_enrolled_at FROM users u LEFT JOIN tenants t ON t.id = u.primary_tenant_id LEFT JOIN tenant_members tm ON tm.user_id = u.id LEFT JOIN tenants tall ON tall.id = tm.tenant_id AND tall.deleted_at IS NULL WHERE ${where.join(" AND ")} GROUP BY u.id ORDER BY u.${sort} ${order}`).bind(...values).all<Record<string, unknown>>();
   return c.json({ users: rows.results.map(user) });
 });
 
@@ -97,13 +97,15 @@ adminRoutes.post("/users", async (c) => {
   if (existing) return error(c, 409, "CONFLICT", "そのログインIDはすでに使われています");
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const tenantId = parsed.data.tenantId ?? current.tenantId;
-  const targetTenant = await c.env.DB.prepare("SELECT id FROM tenants WHERE id = ?1 AND deleted_at IS NULL").bind(tenantId).first();
-  if (!targetTenant) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
+  const tenantIds = Array.from(new Set(parsed.data.tenantIds?.length ? parsed.data.tenantIds : parsed.data.tenantId ? [parsed.data.tenantId] : [current.tenantId]));
+  const placeholders = tenantIds.map(() => "?").join(",");
+  const targetTenants = await c.env.DB.prepare(`SELECT id FROM tenants WHERE id IN (${placeholders}) AND deleted_at IS NULL`).bind(...tenantIds).all<{ id: string }>();
+  if (targetTenants.results.length !== tenantIds.length) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
+  const tenantId = tenantIds[0];
   await c.env.DB.batch([
     c.env.DB.prepare("INSERT INTO users (id, login_id, display_name, role, account_type, primary_tenant_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)").bind(id, parsed.data.loginId, parsed.data.displayName, parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee", parsed.data.role, tenantId, now),
     c.env.DB.prepare("INSERT INTO password_credentials (user_id, hash, algorithm, params_json, updated_at) VALUES (?1, ?2, 'pbkdf2-sha256', '{\"iterations\":100000,\"hash\":\"SHA-256\",\"keyLength\":256}', ?3)").bind(id, await hashPassword(parsed.data.password), now),
-    c.env.DB.prepare("INSERT INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(tenantId, id, now),
+    ...tenantIds.map((assignedTenantId) => c.env.DB.prepare("INSERT INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(assignedTenantId, id, now)),
   ]);
   return c.json({ user: { id, loginId: parsed.data.loginId, displayName: parsed.data.displayName, role: parsed.data.role, tenantId, disabledAt: null } }, 201);
 });
@@ -112,18 +114,22 @@ adminRoutes.patch("/users/:id", async (c) => {
   const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
   const body = await c.req.json().catch(() => null);
-  const parsed = body && typeof body.displayName === "string" && body.displayName.trim().length > 0 && body.displayName.trim().length <= 100 && (body.role === undefined || ["system_admin", "system_operator", "verifier", "member"].includes(body.role)) && (body.tenantId === undefined || typeof body.tenantId === "string") ? { data: { displayName: body.displayName.trim(), role: body.role, tenantId: body.tenantId } } : null;
+  const parsed = body && typeof body.displayName === "string" && body.displayName.trim().length > 0 && body.displayName.trim().length <= 100 && (body.role === undefined || ["system_admin", "system_operator", "verifier", "member"].includes(body.role)) && (body.tenantId === undefined || typeof body.tenantId === "string") && (body.tenantIds === undefined || Array.isArray(body.tenantIds) && body.tenantIds.every((id: unknown) => typeof id === "string")) ? { data: { displayName: body.displayName.trim(), role: body.role, tenantId: body.tenantId, tenantIds: body.tenantIds as string[] | undefined } } : null;
   if (!parsed) return error(c, 400, "VALIDATION_ERROR", "アカウント名を確認してください");
   if (parsed.data.role === "system_admin" && current.role !== "system_admin") return error(c, 403, "FORBIDDEN", "システム管理者の変更はシステム管理者だけが行えます");
   const legacyRole = parsed.data.role === undefined ? null : parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee";
-  const targetTenantId = parsed.data.tenantId ?? undefined;
-  if (targetTenantId) {
-    const tenantExists = await c.env.DB.prepare("SELECT id FROM tenants WHERE id = ?1 AND deleted_at IS NULL").bind(targetTenantId).first();
-    if (!tenantExists) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
+  const assignedTenantIds = Array.from(new Set(parsed.data.tenantIds?.length ? parsed.data.tenantIds : parsed.data.tenantId ? [parsed.data.tenantId] : []));
+  const targetTenantId = assignedTenantIds[0];
+  if (assignedTenantIds.length) {
+    const tenantRows = await c.env.DB.prepare(`SELECT id FROM tenants WHERE id IN (${assignedTenantIds.map(() => "?").join(",")}) AND deleted_at IS NULL`).bind(...assignedTenantIds).all();
+    if (tenantRows.results.length !== assignedTenantIds.length) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
   }
   const result = await c.env.DB.prepare("UPDATE users SET display_name = ?1, role = COALESCE(?2, role), account_type = COALESCE(?3, account_type), primary_tenant_id = COALESCE(?4, primary_tenant_id), updated_at = ?5 WHERE id = ?6").bind(parsed.data.displayName, legacyRole, parsed.data.role ?? null, targetTenantId ?? null, new Date().toISOString(), c.req.param("id")).run();
   if (!result.meta.changes) return error(c, 404, "NOT_FOUND", "ユーザーが見つかりません");
-  if (targetTenantId) await c.env.DB.prepare("INSERT OR IGNORE INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(targetTenantId, c.req.param("id"), new Date().toISOString()).run();
+  if (assignedTenantIds.length) {
+    await c.env.DB.prepare("DELETE FROM tenant_members WHERE user_id = ?1").bind(c.req.param("id")).run();
+    await c.env.DB.batch(assignedTenantIds.map((assignedTenantId) => c.env.DB.prepare("INSERT INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(assignedTenantId, c.req.param("id"), new Date().toISOString())));
+  }
   return c.json({ ok: true });
 });
 
