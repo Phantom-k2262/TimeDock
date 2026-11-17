@@ -53,7 +53,7 @@ p { color: #667085; line-height: 1.65; }
 .folder-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: .8rem; margin-bottom: 1.5rem; }
 .folder-card { display: flex; align-items: center; gap: .8rem; min-height: 84px; padding: 1rem; border: 1px solid #dfe5ef; border-radius: .6rem; color: #263653; background: #fff; text-align: left; }
 .folder-card:hover { border-color: #9db0ed; box-shadow: 0 5px 15px #1d2b4610; }
-.folder-card > span:nth-child(2) { flex: 1; }.folder-card strong, .folder-card small { display: block; }.folder-card small { margin-top: .3rem; color: #7a8699; }.folder-card-icon { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border-radius: .5rem; color: #3157d5; background: #edf1ff; }.folder-card-icon.personal { color: #18724b; background: #e5f7ee; }.folder-badge { padding: .25rem .5rem; border-radius: 99px; color: #65738a; background: #f0f2f5; font-size: .75rem; white-space: nowrap; }.read-only .folder-badge { color: #886500; background: #fff4cf; }
+.folder-card > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }.folder-card strong, .folder-card small { display: block; }.folder-card small { margin-top: .3rem; color: #7a8699; }.folder-card-icon { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border-radius: .5rem; color: #3157d5; background: #edf1ff; }.folder-card-icon.personal { color: #18724b; background: #e5f7ee; }.folder-badge { padding: .25rem .5rem; border-radius: 99px; color: #65738a; background: #f0f2f5; font-size: .75rem; white-space: nowrap; }.read-only .folder-badge { color: #886500; background: #fff4cf; }
 .search-box { display: flex; align-items: center; gap: .5rem; min-width: 250px; margin-left: auto; padding: .5rem .75rem; background: #fff; border: 1px solid #dbe1ea; border-radius: .45rem; color: #8893a4; }
 .search-box input { width: 100%; border: 0; outline: 0; color: #263653; background: transparent; }
 select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem; color: #526079; background: #fff; }
@@ -175,6 +175,16 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
   .panel, .empty-action, .edit-panel { padding: 1rem; }
   .edit-step { gap: .7rem; }
   .edit-step button, .upload-button { margin-left: 0; }
+}
+
+@media (max-width: 400px) {
+  .toolbar { min-width: 0; }
+  .toolbar > * { width: 100%; min-width: 0; }
+  .file-name { gap: .35rem; }
+  .file-name .file-icon { width: 1.45rem; height: 1.45rem; }
+  .folder-card { align-items: flex-start; flex-wrap: wrap; gap: .45rem; }
+  .folder-card > span:nth-child(2) { flex: 1 1 calc(100% - 2rem); }
+  .folder-card .folder-badge { margin-left: 1.9rem; }
 }
 
 @media (min-width: 561px) and (max-width: 820px) {
