@@ -117,6 +117,35 @@ function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
   return values.reduce((current, [reference, value, numeric]) => patchCell(current, reference, value, numeric), xml);
 }
 
+function worksheetPath(entries: Record<string, Uint8Array>, names: string[]) {
+  const workbook = strFromU8(entries["xl/workbook.xml"] ?? new Uint8Array());
+  const relationships = strFromU8(entries["xl/_rels/workbook.xml.rels"] ?? new Uint8Array());
+  const targets = new Map<string, string>();
+  for (const match of relationships.matchAll(/<Relationship\b[^>]*\bId="([^"]+)"[^>]*\bTarget="([^"]+)"[^>]*\/?>(?:<\/Relationship>)?/g)) {
+    const target = match[2].replace(/^\/+/, "").replace(/^\.\.\//, "xl/");
+    targets.set(match[1], target.startsWith("xl/") ? target : `xl/${target}`);
+  }
+  for (const name of names) {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const sheet = workbook.match(new RegExp(`<sheet\\b[^>]*\\bname="${escapedName}"[^>]*\\br:id="([^"]+)"`));
+    const path = sheet ? targets.get(sheet[1]) : undefined;
+    if (path && entries[path]) return path;
+  }
+  return null;
+}
+
+function requestFormulaRecalculation(entries: Record<string, Uint8Array>) {
+  const source = entries["xl/workbook.xml"];
+  if (!source) return;
+  let workbook = strFromU8(source);
+  if (/<calcPr\b/.test(workbook)) {
+    workbook = workbook.replace(/<calcPr\b[^>]*\/?>(?:<\/calcPr>)?/, '<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>');
+  } else {
+    workbook = workbook.replace("</workbook>", '<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>');
+  }
+  entries["xl/workbook.xml"] = strToU8(workbook);
+}
+
 function excelColumn(number: number) {
   let result = "";
   for (let value = number; value > 0; value = Math.floor((value - 1) / 26)) result = String.fromCharCode(65 + ((value - 1) % 26)) + result;
@@ -145,11 +174,15 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   const projectName = profile.project_name ?? "";
   const clientName = profile.client_name ?? "";
 
-  if (input.format === "aaaa_sp" && entries["xl/worksheets/sheet1.xml"]) {
-    entries["xl/worksheets/sheet1.xml"] = strToU8(patchCells(strFromU8(entries["xl/worksheets/sheet1.xml"]), [["C3", monthValue, true], ["E6", companyName], ["E7", name], ["E8", projectName], ["E9", clientName]]));
+  if (input.format === "aaaa_sp") {
+    const path = worksheetPath(entries, ["作業実績表(ABC用)"]);
+    if (!path) throw new Error("テンプレートに作業実績表(ABC用)シートがありません");
+    entries[path] = strToU8(patchCells(strFromU8(entries[path]), [["C3", monthValue, true], ["E6", companyName], ["E7", name], ["E8", projectName], ["E9", clientName]]));
   }
-  if (input.format === "abcs_regular" && entries["xl/worksheets/sheet3.xml"]) {
-    let xml = patchCells(strFromU8(entries["xl/worksheets/sheet3.xml"]), [["A5", monthValue, true], ["B5", employeeCode], ["C5", nameKana], ["D5", name], ["K5", divisionName], ["P5", departmentName]]);
+  if (input.format === "abcs_regular") {
+    const path = worksheetPath(entries, ["勤務表（入力用）"]);
+    if (!path) throw new Error("テンプレートに勤務表（入力用）シートがありません");
+    let xml = patchCells(strFromU8(entries[path]), [["A5", monthValue, true], ["B5", employeeCode], ["C5", nameKana], ["D5", name], ["K5", divisionName], ["P5", departmentName]]);
     input.entries.forEach((entry) => {
       const day = Number(String(entry.work_date ?? "").slice(-2));
       if (!Number.isInteger(day) || day < 1 || day > 31) return;
@@ -157,23 +190,30 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       const workCode = typeof entry.work_code === "string" && entry.work_code ? entry.work_code : "D";
       xml = patchCells(xml, [[`${column}9`, workCode], [`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true], [`${column}13`, entry.project_name ?? ""]]);
     });
-    entries["xl/worksheets/sheet3.xml"] = strToU8(xml);
+    entries[path] = strToU8(xml);
   }
-  if (input.format === "leave_request" && entries["xl/worksheets/sheet1.xml"]) {
-    entries["xl/worksheets/sheet1.xml"] = strToU8(patchCells(strFromU8(entries["xl/worksheets/sheet1.xml"]), [["C2", employeeCode], ["E2", departmentName], ["H2", name]]));
+  if (input.format === "leave_request") {
+    const path = worksheetPath(entries, ["1ﾍﾟｰｼﾞ~5ﾍﾟｰｼﾞ"]);
+    if (!path) throw new Error("テンプレートに休暇申請シートがありません");
+    entries[path] = strToU8(patchCells(strFromU8(entries[path]), [["C2", employeeCode], ["E2", departmentName], ["H2", name]]));
     input.leaveRequests.slice(0, 40).forEach((request, index) => {
       const rowNumber = 9 + index * 2;
-      entries["xl/worksheets/sheet1.xml"] = strToU8(patchCells(strFromU8(entries["xl/worksheets/sheet1.xml"]), [[`C${rowNumber}`, excelSerial(String(request.start_date)), true], [`D${rowNumber}`, request.leave_type], [`E${rowNumber}`, excelSerial(String(request.start_date)), true], [`H${rowNumber}`, request.reason ?? ""]]));
+      entries[path] = strToU8(patchCells(strFromU8(entries[path]), [[`C${rowNumber}`, excelSerial(String(request.start_date)), true], [`D${rowNumber}`, request.leave_type], [`E${rowNumber}`, excelSerial(String(request.start_date)), true], [`H${rowNumber}`, request.reason ?? ""]]));
     });
   }
-  if (input.format === "sp_report" && entries["xl/worksheets/sheet1.xml"]) {
-    let xml = patchCells(strFromU8(entries["xl/worksheets/sheet1.xml"]), [["H1", generatedValue, true], ["E5", companyName], ["E6", name], ["A9", monthValue, true], ["C9", name], ["E9", projectName || clientName]]);
+  if (input.format === "sp_report") {
+    const path = worksheetPath(entries, ["作業実績表(ABC用)"]);
+    if (!path) throw new Error("テンプレートに作業実績表(ABC用)シートがありません");
+    let xml = patchCells(strFromU8(entries[path]), [["H1", generatedValue, true], ["E5", companyName], ["E6", name], ["A9", monthValue, true], ["C9", name], ["E9", projectName || clientName]]);
     input.entries.slice(0, 31).forEach((entry, index) => {
       const rowNumber = 13 + index;
       const toNumber = (value: unknown) => typeof value === "string" ? Number(String(value).replace(":", "")) : Number(value ?? 0);
       xml = patchCells(xml, [[`A${rowNumber}`, excelSerial(String(entry.work_date)), true], [`C${rowNumber}`, toNumber(entry.start_time), true], [`D${rowNumber}`, toNumber(entry.end_time), true], [`E${rowNumber}`, Number(entry.break_minutes ?? 0), true], [`G${rowNumber}`, entry.note ?? ""]]);
     });
-    entries["xl/worksheets/sheet1.xml"] = strToU8(xml);
+    entries[path] = strToU8(xml);
   }
+  // VBA cannot run inside Workers. Preserve the formulas and ask Excel to recalculate
+  // them when the copied workbook is opened, matching the macro-enabled template flow.
+  requestFormulaRecalculation(entries);
   return zipSync(entries, { level: 6 });
 }
