@@ -254,3 +254,11 @@ adminRoutes.put("/folders/:id/permissions", async (c) => {
   await c.env.DB.batch(statements);
   return c.json({ ok: true });
 });
+
+adminRoutes.get("/audit", async (c) => {
+  const current = await accountManagerOrForbidden(c);
+  if (!current.id) return current;
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 100) || 100, 1), 500);
+  const rows = await c.env.DB.prepare(`SELECT a.id, a.entity_type, a.entity_id, a.action, a.details_json, a.request_id, a.created_at, u.login_id AS actor_login_id, u.display_name AS actor_display_name FROM audit_events a LEFT JOIN users u ON u.id = a.actor_id ORDER BY a.created_at DESC LIMIT ?1`).bind(limit).all<Record<string, unknown>>();
+  return c.json({ events: rows.results.map((row) => ({ id: row.id, entityType: row.entity_type, entityId: row.entity_id, action: row.action, details: row.details_json, requestId: row.request_id, createdAt: row.created_at, actorLoginId: row.actor_login_id ?? null, actorDisplayName: row.actor_display_name ?? null })) });
+});
