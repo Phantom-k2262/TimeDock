@@ -1,4 +1,5 @@
 import type { AttendanceExportFormat } from "@timesheet/shared";
+import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 type Cell = string | number | null | undefined;
@@ -94,27 +95,41 @@ export function attendanceFilename(format: AttendanceExportFormat, targetMonth: 
   return `作業報告書・作業実績報告書(SP用)Ver2.2_${person}.${extension}`;
 }
 
-function xmlEscape(value: unknown) {
-  return String(value ?? "").replace(/[<>&'\"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", "\"": "&quot;" })[character] ?? character);
-}
-
-function patchCell(xml: string, reference: string, value: unknown, numeric = false) {
-  const escaped = xmlEscape(value);
-  const content = numeric ? `<v>${escaped}</v>` : `<is><t xml:space="preserve">${escaped}</t></is>`;
-  const pattern = new RegExp(`<c([^>]*\\br="${reference}"[^>]*)>[\\s\\S]*?</c>`);
-  const existing = xml.match(pattern);
-  if (existing) {
-    const attributes = existing[1].replace(/\s+t="[^"]*"/g, "");
-    return xml.replace(pattern, `<c${attributes}${numeric ? "" : " t=\"inlineStr\""}>${content}</c>`);
-  }
-  const rowNumber = reference.match(/\d+$/)?.[0];
-  if (!rowNumber) return xml;
-  const rowPattern = new RegExp(`(<row[^>]*\\br="${rowNumber}"[^>]*>)[\\s\\S]*?(</row>)`);
-  return xml.replace(rowPattern, `$1<c r="${reference}"${numeric ? "" : " t=\"inlineStr\""}>${content}</c>$2`);
+function parseXml(xml: string) {
+  return new DOMParser().parseFromString(xml, "application/xml");
 }
 
 function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
-  return values.reduce((current, [reference, value, numeric]) => patchCell(current, reference, value, numeric), xml);
+  const document = parseXml(xml);
+  const cells = document.getElementsByTagName("c");
+  const rows = document.getElementsByTagName("row");
+  for (const [reference, value, numeric] of values) {
+    let cell = Array.from(cells).find((candidate) => candidate.getAttribute("r") === reference);
+    if (!cell) {
+      const rowNumber = reference.match(/\d+$/)?.[0];
+      const row = Array.from(rows).find((candidate) => candidate.getAttribute("r") === rowNumber);
+      if (!row) continue;
+      cell = document.createElement("c");
+      cell.setAttribute("r", reference);
+      row.appendChild(cell);
+    }
+    cell.removeAttribute("t");
+    while (cell.firstChild) cell.removeChild(cell.firstChild);
+    if (numeric) {
+      const valueElement = document.createElement("v");
+      valueElement.appendChild(document.createTextNode(String(value ?? "")));
+      cell.appendChild(valueElement);
+    } else {
+      cell.setAttribute("t", "inlineStr");
+      const inlineString = document.createElement("is");
+      const text = document.createElement("t");
+      text.setAttribute("xml:space", "preserve");
+      text.appendChild(document.createTextNode(String(value ?? "")));
+      inlineString.appendChild(text);
+      cell.appendChild(inlineString);
+    }
+  }
+  return new XMLSerializer().serializeToString(document);
 }
 
 function worksheetPath(entries: Record<string, Uint8Array>, names: string[]) {
@@ -137,13 +152,15 @@ function worksheetPath(entries: Record<string, Uint8Array>, names: string[]) {
 function requestFormulaRecalculation(entries: Record<string, Uint8Array>) {
   const source = entries["xl/workbook.xml"];
   if (!source) return;
-  let workbook = strFromU8(source);
-  if (/<calcPr\b/.test(workbook)) {
-    workbook = workbook.replace(/<calcPr\b[^>]*\/?>(?:<\/calcPr>)?/, '<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>');
-  } else {
-    workbook = workbook.replace("</workbook>", '<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>');
-  }
-  entries["xl/workbook.xml"] = strToU8(workbook);
+  const document = parseXml(strFromU8(source));
+  const existing = document.getElementsByTagName("calcPr")[0];
+  const calcPr = existing ?? document.createElement("calcPr");
+  calcPr.setAttribute("calcMode", "auto");
+  calcPr.setAttribute("fullCalcOnLoad", "1");
+  calcPr.setAttribute("forceFullCalc", "1");
+  if (!existing) document.documentElement.appendChild(calcPr);
+  entries["xl/workbook.xml"] = strToU8(new XMLSerializer().serializeToString(document));
+  delete entries["xl/calcChain.xml"];
 }
 
 function excelColumn(number: number) {
