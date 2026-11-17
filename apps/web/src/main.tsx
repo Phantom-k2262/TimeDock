@@ -2,96 +2,32 @@ import { StrictMode, useEffect, useState, type FormEvent, type ReactNode } from 
 import { createRoot } from "react-dom/client";
 import "./style.css";
 
-function navigate(path: string) {
-  window.history.pushState({}, "", path);
-  window.dispatchEvent(new PopStateEvent("popstate"));
+function navigate(path: string) { window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }
+type FileStatus = "draft" | "submitted" | "approved";
+const files = [
+  { id: "ts-2026-11", name: "2026年11月.xlsx", modified: "2026/11/16 18:20", size: "84 KB", status: "draft" as FileStatus },
+  { id: "ts-2026-10", name: "2026年10月.xlsx", modified: "2026/11/01 09:14", size: "82 KB", status: "submitted" as FileStatus },
+  { id: "ts-2026-09", name: "2026年09月.xlsx", modified: "2026/10/01 08:55", size: "81 KB", status: "approved" as FileStatus },
+];
+
+function StatusBadge({ status }: { status: FileStatus }) { const labels = { draft: "下書き", submitted: "承認待ち", approved: "承認済み" }; return <span className={`status ${status}`}>{labels[status]}</span>; }
+function Icon({ name }: { name: "folder" | "file" | "search" | "plus" | "download" | "upload" | "chevron" }) {
+  const paths = { folder: <><path d="M3 6.5h6l2 2h10v10H3z" /><path d="M3 8.5h18" /></>, file: <><path d="M6 2.5h8l4 4v15H6z" /><path d="M14 2.5v5h4M9 12h6M9 16h6" /></>, search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></>, plus: <><path d="M12 5v14M5 12h14" /></>, download: <><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></>, upload: <><path d="M12 21V6M7 11l5-5 5 5M5 3h14" /></>, chevron: <path d="m9 6 6 6-6 6" /> };
+  return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function LoginPage() {
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    setBusy(true);
-    const form = new FormData(event.currentTarget);
-    try {
-      const response = await fetch("/api/v1/auth/password/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ loginId: form.get("loginId"), password: form.get("password") }) });
-      if (!response.ok) throw new Error(response.status === 401 ? "ログインIDまたはパスワードが正しくありません" : "ログインサービスに接続できません");
-      navigate("/dashboard");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "ログインに失敗しました");
-    } finally {
-      setBusy(false);
-    }
-  }
-  return <main>
-    <p className="eyebrow">TIMESHEET PORTAL</p>
-    <h1>ログイン</h1>
-    <p>勤務表ポータルにログインしてください。</p>
-    <form className="login-form" onSubmit={submit}>
-      <label htmlFor="loginId">ログインID</label>
-      <input id="loginId" name="loginId" type="text" autoComplete="username" required />
-      <label htmlFor="password">パスワード</label>
-      <input id="password" name="password" type="password" autoComplete="current-password" required />
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <button type="submit" disabled={busy}>{busy ? "ログイン中…" : "ログイン"}</button>
-    </form>
-    <a href="/">トップへ戻る</a>
-  </main>;
-}
+function Shell({ children }: { children: ReactNode }) { return <div className="app-shell"><header className="topbar"><a className="brand" href="/dashboard" onClick={(event) => { event.preventDefault(); navigate("/dashboard"); }}><span className="brand-mark">T</span><strong>Timesheet Portal</strong></a><div className="topbar-spacer" /><span className="user-chip"><span className="avatar">山</span>山田 太郎</span><button className="text-button" onClick={() => navigate("/login")}>ログアウト</button></header><div className="workspace"><aside className="sidebar"><button className="new-button" onClick={() => navigate("/timesheets/new")}><Icon name="plus" />新しい勤務表</button><nav className="side-nav" aria-label="メインメニュー"><a className="active" href="/dashboard" onClick={(event) => { event.preventDefault(); navigate("/dashboard"); }}><Icon name="folder" />マイドキュメント</a><a href="/approvals" onClick={(event) => { event.preventDefault(); navigate("/approvals"); }}><Icon name="file" />承認待ち</a><a href="/admin/users" onClick={(event) => { event.preventDefault(); navigate("/admin/users"); }}><Icon name="folder" />管理</a></nav><div className="sidebar-foot"><span>ストレージ</span><div className="storage-bar"><i /></div><small>勤務表を安全に保管しています</small></div></aside><div className="content">{children}</div></div></div>; }
+function PageHeader({ eyebrow, title, description, children }: { eyebrow?: string; title: string; description?: string; children?: ReactNode }) { return <div className="page-header"><div><div className="breadcrumb"><a href="/dashboard" onClick={(event) => { event.preventDefault(); navigate("/dashboard"); }}>マイドキュメント</a>{eyebrow && <><Icon name="chevron" /><span>{eyebrow}</span></>}</div><h1>{title}</h1>{description && <p>{description}</p>}</div>{children}</div>; }
+function Toolbar({ onCreate }: { onCreate: () => void }) { return <div className="toolbar"><button className="primary-button" onClick={onCreate}><Icon name="plus" />新しい勤務表</button><div className="search-box"><Icon name="search" /><input aria-label="勤務表を検索" placeholder="勤務表を検索" /></div><select aria-label="表示する状態" defaultValue="all"><option value="all">すべての状態</option><option value="draft">下書き</option><option value="submitted">承認待ち</option><option value="approved">承認済み</option></select></div>; }
+function FileRow({ file }: { file: typeof files[number] }) { return <div className="file-row"><div className="file-name"><span className="file-icon"><Icon name="file" /></span><div><a href={`/timesheets/${file.id}`} onClick={(event) => { event.preventDefault(); navigate(`/timesheets/${file.id}`); }}>{file.name}</a><small>勤務表 / 2026年度</small></div></div><div><StatusBadge status={file.status} /></div><div className="muted-cell">{file.modified}</div><div className="muted-cell">{file.size}</div><button className="row-action" onClick={() => navigate(`/timesheets/${file.id}`)}>開く <Icon name="chevron" /></button></div>; }
+function DashboardPage() { return <Shell><main className="page"><PageHeader title="マイドキュメント" description="自分の勤務表を管理・提出できます。" /><Toolbar onCreate={() => navigate("/timesheets/new")} /><div className="location-bar"><Icon name="folder" /><strong>勤務表</strong><span className="item-count">{files.length} 件</span></div><section className="file-list" aria-label="勤務表一覧"><div className="file-list-head"><span>名前</span><span>状態</span><span>最終更新</span><span>サイズ</span><span /></div>{files.map((file) => <FileRow key={file.id} file={file} />)}</section><div className="tip-card"><span className="tip-icon">i</span><div><strong>勤務表の操作について</strong><p>ファイルを開いて「編集する」を押すと、ダウンロード・編集・アップロード・提出の順に進められます。</p></div></div></main></Shell>; }
 
-function Shell({ children }: { children: ReactNode }) {
-  return <><header className="topbar"><strong>Timesheet Portal</strong><nav><a href="/dashboard">勤務表</a><a href="/approvals">承認</a><a href="/admin/users">管理</a></nav><button onClick={() => navigate("/login")}>ログアウト</button></header>{children}</>;
-}
-
-function HomePage() {
-  return <main><p className="eyebrow">TIMESHEET PORTAL</p><h1>勤務表を、確実に提出する。</h1><p>チェックアウト → ローカルExcel編集 → チェックイン → 提出の流れを安全に管理します。</p><a href="/login">ログイン画面へ</a></main>;
-}
-
-function DashboardPage() {
-  return <Shell><main><p className="eyebrow">DASHBOARD</p><h1>勤務表</h1><section className="card"><div><strong>2026年11月</strong><p>今月の勤務表 · 下書き</p></div><span className="status draft">下書き</span><button onClick={() => navigate("/timesheets/ts-2026-11")}>開く</button></section><button className="secondary" onClick={() => navigate("/timesheets/new")}>＋ 新しい勤務表を作成</button></main></Shell>;
-}
-
-function NewTimesheetPage() {
-  return <Shell><main><p className="eyebrow">NEW TIMESHEET</p><h1>勤務表を作成</h1><section className="card form-card"><label>対象月<select defaultValue="2026-11"><option>2026-11</option><option>2026-12</option></select></label><label>テンプレート<select defaultValue="standard"><option value="standard">標準勤務表 v1</option></select></label><button onClick={() => navigate("/timesheets/ts-2026-11")}>作成する</button></section></main></Shell>;
-}
-
-function TimesheetDetailPage() {
-  return <Shell><main><p className="eyebrow">TIMESHEET / 2026-11</p><h1>2026年11月の勤務表</h1><section className="steps"><div className="step active"><b>1</b><span><strong>チェックアウト</strong><small>編集権を取得</small></span><button onClick={() => navigate("/timesheets/ts-2026-11")}>取得</button></div><div className="step"><b>2</b><span><strong>Excelで編集</strong><small>ダウンロードしてローカルで編集</small></span><button className="secondary">ダウンロード</button></div><div className="step"><b>3</b><span><strong>チェックイン</strong><small>編集済みファイルをアップロード</small></span><button className="secondary">ファイルを選択</button></div></section><button onClick={() => navigate("/dashboard")}>提出準備を完了</button></main></Shell>;
-}
-
-function ApprovalsPage() {
-  return <Shell><main><p className="eyebrow">APPROVALS</p><h1>承認待ち</h1><section className="card"><div><strong>サンプル社員 · 2026年11月</strong><p>版 v3 · 提出済み</p></div><button onClick={() => window.alert("仮実装: 承認しました")}>承認</button><button className="secondary" onClick={() => window.alert("仮実装: 差戻し理由を入力します")}>差戻し</button></section></main></Shell>;
-}
-
-function AdminPage() {
-  return <Shell><main><p className="eyebrow">ADMIN</p><h1>管理</h1><div className="grid"><button className="card link-card" onClick={() => navigate("/admin/users")}>ユーザー管理<small>招待・ロール・無効化</small></button><button className="card link-card" onClick={() => navigate("/admin/templates")}>テンプレート管理<small>.xlsxテンプレート</small></button><button className="card link-card" onClick={() => navigate("/admin/audit")}>監査履歴<small>操作ログを確認</small></button></div></main></Shell>;
-}
-
-function AdminSubPage({ title, description }: { title: string; description: string }) {
-  return <Shell><main><p className="eyebrow">ADMIN</p><h1>{title}</h1><section className="card"><p>{description}</p><button className="secondary">仮データを読み込む</button></section><a href="/admin/users">管理トップへ</a></main></Shell>;
-}
-
-function App() {
-  const [path, setPath] = useState(window.location.pathname);
-
-  useEffect(() => {
-    const onPopState = () => setPath(window.location.pathname);
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
-
-  if (path === "/login") return <LoginPage />;
-  if (path === "/dashboard") return <DashboardPage />;
-  if (path === "/timesheets/new") return <NewTimesheetPage />;
-  if (path.startsWith("/timesheets/")) return <TimesheetDetailPage />;
-  if (path === "/approvals") return <ApprovalsPage />;
-  if (path === "/admin/users") return <AdminSubPage title="ユーザー管理" description="社内ログインIDでユーザーを管理します。メールアドレスは収集しません。" />;
-  if (path === "/admin/templates") return <AdminSubPage title="テンプレート管理" description="勤務表の.xlsxテンプレートを管理します。" />;
-  if (path === "/admin/audit") return <AdminSubPage title="監査履歴" description="ログイン、ファイル操作、提出・承認の履歴を表示します。" />;
-  if (path === "/admin") return <AdminPage />;
-  return <HomePage />;
-}
-
+function LoginPage() { const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false); async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setError(null); setBusy(true); const form = new FormData(event.currentTarget); try { const response = await fetch("/api/v1/auth/password/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ loginId: form.get("loginId"), password: form.get("password") }) }); if (!response.ok) throw new Error(response.status === 401 ? "ログインIDまたはパスワードが正しくありません" : "ログインサービスに接続できません"); navigate("/dashboard"); } catch (cause) { setError(cause instanceof Error ? cause.message : "ログインに失敗しました"); } finally { setBusy(false); } } return <main className="login-page"><div className="login-brand"><span className="brand-mark">T</span><strong>Timesheet Portal</strong></div><div className="login-card"><p className="eyebrow">TIMESHEET PORTAL</p><h1>勤務表を、確実に提出する。</h1><p>ログインして、勤務表のファイルを管理しましょう。</p><form className="login-form" onSubmit={submit}><label htmlFor="loginId">ログインID</label><input id="loginId" name="loginId" type="text" autoComplete="username" required /><label htmlFor="password">パスワード</label><input id="password" name="password" type="password" autoComplete="current-password" required />{error && <p className="form-error" role="alert">{error}</p>}<button type="submit" disabled={busy}>{busy ? "ログイン中…" : "ログイン"}</button></form><p className="login-note">アカウントについては管理者に確認してください。</p></div></main>; }
+function NewTimesheetPage() { return <Shell><main className="page narrow-page"><PageHeader eyebrow="新規作成" title="新しい勤務表" description="対象月とテンプレートを選択してファイルを作成します。" /><section className="panel form-panel"><label>対象月<select defaultValue="2026-11"><option>2026-11</option><option>2026-12</option></select></label><label>テンプレート<select defaultValue="standard"><option value="standard">標準勤務表 v1</option></select></label><div className="form-actions"><button className="secondary-button" onClick={() => navigate("/dashboard")}>キャンセル</button><button className="primary-button" onClick={() => navigate("/timesheets/ts-2026-11")}>作成する</button></div></section></main></Shell>; }
+function TimesheetDetailPage() { const [editing, setEditing] = useState(false); return <Shell><main className="page"><PageHeader eyebrow="2026年11月.xlsx" title="2026年11月.xlsx" description="勤務表 / 2026年度"><div className="header-actions"><button className="secondary-button"><Icon name="download" />ダウンロード</button><button className="primary-button" onClick={() => setEditing(true)}>{editing ? "編集中" : "編集する"}</button></div></PageHeader><div className="file-meta"><span><strong>状態</strong><StatusBadge status="draft" /></span><span><strong>最終更新</strong>2026/11/16 18:20</span><span><strong>サイズ</strong>84 KB</span><span><strong>バージョン</strong>v3</span></div>{editing ? <section className="edit-panel"><div className="edit-heading"><div><p className="eyebrow">編集中</p><h2>ファイルを編集して提出</h2><p>次の3ステップで完了します。編集中は他の人がこのファイルを更新できません。</p></div><span className="lock-note">編集状態を保持中</span></div><div className="edit-steps"><div className="edit-step done"><span>1</span><div><strong>ファイルをダウンロード</strong><small>Excelで開いて編集します</small></div><button className="secondary-button"><Icon name="download" />ダウンロード</button></div><div className="edit-step"><span>2</span><div><strong>編集済みファイルをアップロード</strong><small>保存した.xlsxファイルを選択します</small></div><label className="upload-button"><Icon name="upload" />ファイルを選択<input type="file" accept=".xlsx" /></label></div><div className="edit-step"><span>3</span><div><strong>提出する</strong><small>承認者へ提出します</small></div><button className="primary-button" onClick={() => navigate("/dashboard")}>提出する</button></div></div><button className="cancel-link" onClick={() => setEditing(false)}>編集をやめる</button></section> : <section className="empty-action"><div className="large-file-icon"><Icon name="file" /></div><h2>この勤務表を編集しますか？</h2><p>「編集する」を押すと、ファイルをダウンロードして編集を開始できます。</p><button className="primary-button" onClick={() => setEditing(true)}>編集する</button></section>}<div className="history-link"><button className="text-button">変更履歴を見る</button></div></main></Shell>; }
+function ApprovalsPage() { return <Shell><main className="page"><PageHeader title="承認待ち" description="あなたが確認する勤務表です。" /><div className="file-list"><div className="file-list-head"><span>名前</span><span>状態</span><span>提出日</span><span>提出者</span><span /></div><div className="file-row"><div className="file-name"><span className="file-icon"><Icon name="file" /></span><div><a href="/timesheets/ts-2026-11">2026年11月.xlsx</a><small>勤務表 / 2026年度</small></div></div><StatusBadge status="submitted" /><div className="muted-cell">2026/11/16</div><div className="muted-cell">佐藤 花子</div><button className="row-action">確認する <Icon name="chevron" /></button></div></div></main></Shell>; }
+function AdminPage() { return <Shell><main className="page"><PageHeader title="管理" description="ユーザー、テンプレート、操作履歴を管理します。" /><div className="admin-grid"><button className="admin-card" onClick={() => navigate("/admin/users")}><Icon name="folder" /><strong>ユーザー管理</strong><small>招待・ロール・無効化</small></button><button className="admin-card" onClick={() => navigate("/admin/templates")}><Icon name="folder" /><strong>テンプレート管理</strong><small>.xlsxテンプレート</small></button><button className="admin-card" onClick={() => navigate("/admin/audit")}><Icon name="file" /><strong>監査履歴</strong><small>操作ログを確認</small></button></div></main></Shell>; }
+function AdminSubPage({ title, description }: { title: string; description: string }) { return <Shell><main className="page narrow-page"><PageHeader eyebrow="管理" title={title} description={description} /><section className="panel"><p>この管理画面は準備中です。</p><button className="secondary-button">仮データを読み込む</button></section></main></Shell>; }
+function HomePage() { return <main className="login-page"><div className="login-brand"><span className="brand-mark">T</span><strong>Timesheet Portal</strong></div><div className="welcome-card"><p className="eyebrow">TIMESHEET PORTAL</p><h1>勤務表を、確実に提出する。</h1><p>SharePointのように、勤務表ファイルを一覧から開いて管理できます。</p><button className="primary-button" onClick={() => navigate("/login")}>ログイン画面へ</button></div></main>; }
+function App() { const [path, setPath] = useState(window.location.pathname); useEffect(() => { const onPopState = () => setPath(window.location.pathname); window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState); }, []); if (path === "/login") return <LoginPage />; if (path === "/dashboard") return <DashboardPage />; if (path === "/timesheets/new") return <NewTimesheetPage />; if (path.startsWith("/timesheets/")) return <TimesheetDetailPage />; if (path === "/approvals") return <ApprovalsPage />; if (path === "/admin/users") return <AdminSubPage title="ユーザー管理" description="社内ログインIDでユーザーを管理します。メールアドレスは収集しません。" />; if (path === "/admin/templates") return <AdminSubPage title="テンプレート管理" description="勤務表の.xlsxテンプレートを管理します。" />; if (path === "/admin/audit") return <AdminSubPage title="監査履歴" description="ログイン、ファイル操作、提出・承認の履歴を表示します。" />; if (path === "/admin") return <AdminPage />; return <HomePage />; }
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
