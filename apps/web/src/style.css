@@ -179,12 +179,16 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 
 @media (max-width: 400px) {
   .toolbar { min-width: 0; }
-  .toolbar > * { width: 100%; min-width: 0; }
+  .toolbar > * { width: 100%; min-width: 0; max-width: 100%; }
+  .toolbar select { width: 100%; min-width: 0; }
+  .file-list-head, .file-row { grid-template-columns: minmax(0, 1fr); }
+  .file-row .row-action { justify-content: flex-start; }
   .file-name { gap: .35rem; }
   .file-name .file-icon { width: 1.45rem; height: 1.45rem; }
+  .file-name > div { overflow-wrap: anywhere; word-break: break-word; }
   .folder-card { align-items: flex-start; flex-wrap: wrap; gap: .45rem; }
   .folder-card > span:nth-child(2) { flex: 1 1 calc(100% - 2rem); }
-  .folder-card .folder-badge { margin-left: 1.9rem; }
+  .folder-card .folder-badge { margin-left: 0; white-space: normal; }
 }
 
 @media (min-width: 561px) and (max-width: 820px) {
