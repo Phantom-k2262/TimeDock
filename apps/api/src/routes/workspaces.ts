@@ -24,6 +24,7 @@ workspaceRoutes.get("/", async (c) => {
 workspaceRoutes.post("/", async (c) => {
   const current = await getSessionUser(c);
   if (!current) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
+  if (current.suspendedAt) return error(c, 403, "FORBIDDEN", "停止中のアカウントはワークスペースを作成できません");
   const parsed = WorkspaceCreateRequestSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return error(c, 400, "VALIDATION_ERROR", "ワークスペース名を確認してください");
   const crossTenant = current.role === "system_admin" || current.role === "system_operator";

@@ -13,17 +13,17 @@ export async function getSessionUser(c: any, allowTwoFactorPending = false): Pro
 
 export async function requireAdmin(c: any): Promise<SessionUser | null> {
   const user = await getSessionUser(c);
-  return user?.role === "system_admin" ? user : null;
+  return user?.role === "system_admin" && !user.suspendedAt ? user : null;
 }
 
 export async function requireAccountManager(c: any): Promise<SessionUser | null> {
   const user = await getSessionUser(c);
-  return user?.role === "system_admin" || user?.role === "system_operator" ? user : null;
+  return (user?.role === "system_admin" || user?.role === "system_operator") && !user.suspendedAt ? user : null;
 }
 
 export async function requireFileManager(c: any): Promise<SessionUser | null> {
   const user = await getSessionUser(c);
-  return user?.role === "system_admin" || user?.role === "verifier" ? user : null;
+  return (user?.role === "system_admin" || user?.role === "verifier") && !user.suspendedAt ? user : null;
 }
 
 export function canManageFiles(role: SessionUser["role"]) {
