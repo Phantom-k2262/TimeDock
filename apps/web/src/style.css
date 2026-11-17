@@ -100,3 +100,20 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 .two-factor-uri { margin-top: 1rem; color: #526079; font-size: .85rem; }
 .two-factor-uri summary { cursor: pointer; }
 .two-factor-uri code { margin-top: .5rem; font-size: .72rem; letter-spacing: 0; }
+.form-panel, .panel { box-sizing: border-box; min-width: 0; }
+.form-panel input, .form-panel textarea, .form-panel select { box-sizing: border-box; max-width: 100%; min-width: 0; }
+.template-upload-panel { display: grid; gap: 1rem; max-width: 760px; }
+.template-upload-panel label { display: grid; gap: .45rem; font-weight: 700; color: #334155; }
+.template-upload-panel input, .template-upload-panel select, .list-tools input, .list-tools select { box-sizing: border-box; min-width: 0; padding: .65rem .75rem; border: 1px solid #cbd3e1; border-radius: .45rem; background: #fff; }
+.list-heading, .section-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: start; margin-bottom: 1rem; }
+.list-heading h2, .section-heading h2 { margin: 0; }
+.list-tools { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: end; }
+.user-actions { display: flex; flex-wrap: wrap; gap: .35rem; justify-content: end; }
+.suspended-label { padding: .25rem .55rem; border-radius: 99px; font-size: .75rem; font-weight: 700; color: #9a5b00; background: #fff2cc; }
+.danger-button { color: #b42318; }
+.workspace-template-list { display: grid; gap: .55rem; }
+.workspace-template-row { display: flex; align-items: center; gap: .7rem; padding: .75rem; border: 1px solid #e5e9f0; border-radius: .5rem; }
+.workspace-template-row .icon { color: #3157d5; }
+.workspace-template-row strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.workspace-template-row small { color: #718096; }
+@media (max-width: 700px) { .list-heading, .section-heading { flex-direction: column; }.list-tools { justify-content: stretch; width: 100%; }.list-tools > * { flex: 1 1 130px; }.user-list-row { align-items: flex-start; flex-wrap: wrap; }.user-actions { width: 100%; justify-content: start; }.workspace-template-row { align-items: flex-start; flex-wrap: wrap; }.workspace-template-row .secondary-button { width: 100%; text-align: center; } }

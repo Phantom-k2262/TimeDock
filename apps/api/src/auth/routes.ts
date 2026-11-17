@@ -13,7 +13,7 @@ function error(c: any, status: 400 | 401 | 500, code: string, message: string) {
 
 function userFromRow(row: Record<string, unknown>): SessionUser {
   const legacyRole = row.role === "admin" ? "system_admin" : row.role === "approver" ? "verifier" : "member";
-  return { ...UserSchema.parse({ id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole }), tenantId: String(row.primary_tenant_id) };
+  return { ...UserSchema.parse({ id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole }), tenantId: String(row.primary_tenant_id), suspendedAt: row.suspended_at as string | null };
 }
 
 export const authRoutes = new Hono<{ Bindings: AuthBindings }>();
@@ -24,7 +24,7 @@ authRoutes.post("/password/login", async (c) => {
   if (!parsed.success) return error(c, 400, "VALIDATION_ERROR", "ログインIDまたはパスワードが正しくありません");
   if (!c.env.DB) return error(c, 500, "INTERNAL_ERROR", "認証サービスを利用できません");
 
-  const result = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, u.two_factor_required, u.two_factor_enrolled_at, p.hash FROM users u JOIN password_credentials p ON p.user_id = u.id WHERE u.login_id = ?1 AND u.disabled_at IS NULL").bind(parsed.data.loginId).first<Record<string, unknown>>();
+  const result = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, u.two_factor_required, u.two_factor_enrolled_at, u.suspended_at, p.hash FROM users u JOIN password_credentials p ON p.user_id = u.id WHERE u.login_id = ?1 AND u.disabled_at IS NULL").bind(parsed.data.loginId).first<Record<string, unknown>>();
   const valid = result ? await verifyPassword(parsed.data.password, String(result.hash)) : false;
   if (!valid || !result) return error(c, 401, "UNAUTHENTICATED", "ログインIDまたはパスワードが正しくありません");
 
@@ -39,7 +39,7 @@ authRoutes.post("/password/login", async (c) => {
 authRoutes.get("/me", async (c) => {
   const sessionId = readSessionId(c.req.raw);
   if (!sessionId || !c.env.DB) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
-  const row = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, u.two_factor_required, u.two_factor_enrolled_at, s.two_factor_verified_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ?1 AND s.revoked_at IS NULL AND s.expires_at > ?2 AND u.disabled_at IS NULL").bind(await hashSessionId(sessionId), new Date().toISOString()).first<Record<string, unknown>>();
+  const row = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, u.two_factor_required, u.two_factor_enrolled_at, u.suspended_at, s.two_factor_verified_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ?1 AND s.revoked_at IS NULL AND s.expires_at > ?2 AND u.disabled_at IS NULL").bind(await hashSessionId(sessionId), new Date().toISOString()).first<Record<string, unknown>>();
   if (!row) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
   const user = userFromRow(row);
   return c.json({ user, twoFactor: { required: user.role !== "system_admin" && row.two_factor_required !== 0, enrolled: Boolean(row.two_factor_enrolled_at), verified: user.role === "system_admin" || row.two_factor_required === 0 || Boolean(row.two_factor_verified_at) } });

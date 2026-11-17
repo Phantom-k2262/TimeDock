@@ -4,6 +4,7 @@ import { archiveRoutes } from "./routes/archive";
 import { adminRoutes } from "./routes/admin";
 import { workspaceRoutes } from "./routes/workspaces";
 import { tenantRoutes } from "./routes/tenants";
+import { templateRoutes } from "./routes/templates";
 
 type Bindings = { DB: D1Database; FILES: R2Bucket; ASSETS: Fetcher; APP_ENV: string; MAX_UPLOAD_MIB: string };
 const app = new Hono<{ Bindings: Bindings }>();
@@ -15,6 +16,7 @@ app.route("/api/v1/admin/archive", archiveRoutes);
 app.route("/api/v1/admin", adminRoutes);
 app.route("/api/v1/workspaces", workspaceRoutes);
 app.route("/api/v1/tenants", tenantRoutes);
+app.route("/api/v1/admin/templates", templateRoutes);
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default app;

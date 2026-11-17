@@ -12,7 +12,7 @@ function error(c: any, status: 400 | 401 | 403 | 404 | 409 | 500, code: string, 
 
 function user(row: Record<string, unknown>) {
   const legacyRole = row.role === "admin" ? "system_admin" : row.role === "approver" ? "verifier" : "member";
-  return { id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole, tenantId: row.primary_tenant_id, tenantName: row.tenant_name, disabledAt: row.disabled_at ?? null, twoFactorRequired: row.two_factor_required !== 0, twoFactorEnrolled: Boolean(row.two_factor_enrolled_at) };
+  return { id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole, tenantId: row.primary_tenant_id, tenantName: row.tenant_name, disabledAt: row.disabled_at ?? null, suspendedAt: row.suspended_at ?? null, twoFactorRequired: row.two_factor_required !== 0, twoFactorEnrolled: Boolean(row.two_factor_enrolled_at) };
 }
 
 function tenant(row: Record<string, unknown>) {
@@ -38,7 +38,21 @@ async function fileManagerOrForbidden(c: any) {
 adminRoutes.get("/users", async (c) => {
   const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
-  const rows = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, t.name AS tenant_name, u.disabled_at, u.two_factor_required, u.two_factor_enrolled_at FROM users u LEFT JOIN tenants t ON t.id = u.primary_tenant_id ORDER BY u.disabled_at IS NOT NULL, u.display_name").all<Record<string, unknown>>();
+  const q = (c.req.query("q") ?? "").trim();
+  const role = c.req.query("role") ?? "";
+  const tenantId = c.req.query("tenantId") ?? "";
+  const status = c.req.query("status") ?? "";
+  const sort = ["display_name", "login_id", "role", "created_at"].includes(c.req.query("sort") ?? "") ? c.req.query("sort")! : "display_name";
+  const order = c.req.query("order") === "desc" ? "DESC" : "ASC";
+  const where = ["1 = 1"];
+  const values: string[] = [];
+  if (q) { where.push("(u.login_id LIKE ? OR u.display_name LIKE ?)"); values.push(`%${q}%`, `%${q}%`); }
+  if (["system_admin", "system_operator", "verifier", "member"].includes(role)) { where.push("u.account_type = ?"); values.push(role); }
+  if (tenantId) { where.push("u.primary_tenant_id = ?"); values.push(tenantId); }
+  if (status === "active") where.push("u.disabled_at IS NULL AND u.suspended_at IS NULL");
+  if (status === "suspended") where.push("u.suspended_at IS NOT NULL AND u.disabled_at IS NULL");
+  if (status === "disabled") where.push("u.disabled_at IS NOT NULL");
+  const rows = await c.env.DB.prepare(`SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.primary_tenant_id, t.name AS tenant_name, u.disabled_at, u.suspended_at, u.two_factor_required, u.two_factor_enrolled_at FROM users u LEFT JOIN tenants t ON t.id = u.primary_tenant_id WHERE ${where.join(" AND ")} ORDER BY u.${sort} ${order}`).bind(...values).all<Record<string, unknown>>();
   return c.json({ users: rows.results.map(user) });
 });
 
@@ -158,6 +172,18 @@ adminRoutes.delete("/users/:id", async (c) => {
   const result = await c.env.DB.prepare("UPDATE users SET disabled_at = COALESCE(disabled_at, ?1), updated_at = ?1 WHERE id = ?2").bind(new Date().toISOString(), c.req.param("id")).run();
   if (!result.meta.changes) return error(c, 404, "NOT_FOUND", "ユーザーが見つかりません");
   return c.body(null, 204);
+});
+
+adminRoutes.patch("/users/:id/suspension", async (c) => {
+  const current = await accountManagerOrForbidden(c);
+  if (!current.id) return current;
+  if (current.id === c.req.param("id")) return error(c, 400, "VALIDATION_ERROR", "自分自身は停止できません");
+  const body = await c.req.json().catch(() => null) as { suspended?: unknown } | null;
+  if (typeof body?.suspended !== "boolean") return error(c, 400, "VALIDATION_ERROR", "停止状態を確認してください");
+  const now = new Date().toISOString();
+  const result = await c.env.DB.prepare("UPDATE users SET suspended_at = ?1, updated_at = ?2 WHERE id = ?3 AND disabled_at IS NULL").bind(body.suspended ? now : null, now, c.req.param("id")).run();
+  if (!result.meta.changes) return error(c, 404, "NOT_FOUND", "有効なユーザーが見つかりません");
+  return c.json({ ok: true, suspended: body.suspended });
 });
 
 adminRoutes.get("/workspaces", async (c) => {
