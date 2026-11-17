@@ -113,6 +113,18 @@ workspaceRoutes.post("/:id/files", async (c) => {
   return c.json({ file: { id, name: file.name, category, sizeBytes: file.size } }, 201);
 });
 
+workspaceRoutes.delete("/:id/files/:fileId", async (c) => {
+  const { current, allowed } = await workspaceAccess(c, c.req.param("id"));
+  if (!current) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
+  if (!allowed || current.role === "system_operator") return error(c, 403, "FORBIDDEN", "ファイル削除権限がありません");
+  const row = await c.env.DB.prepare("SELECT d.id, d.r2_key, d.owner_user_id FROM documents d JOIN folders f ON f.id = d.folder_id AND f.workspace_id = ?1 WHERE d.id = ?2 AND d.deleted_at IS NULL").bind(c.req.param("id"), c.req.param("fileId")).first<{ id: string; r2_key: string; owner_user_id: string }>();
+  if (!row) return error(c, 404, "NOT_FOUND", "ファイルが見つかりません");
+  if (current.role !== "system_admin" && current.role !== "verifier" && row.owner_user_id !== current.id) return error(c, 403, "FORBIDDEN", "自分が追加したファイルのみ削除できます");
+  await c.env.FILES.delete(row.r2_key);
+  await c.env.DB.prepare("UPDATE documents SET deleted_at = ?1 WHERE id = ?2").bind(new Date().toISOString(), row.id).run();
+  return c.json({ ok: true });
+});
+
 workspaceRoutes.get("/:id/files/:fileId/download", async (c) => {
   const { current, allowed } = await workspaceAccess(c, c.req.param("id"));
   if (!current) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
