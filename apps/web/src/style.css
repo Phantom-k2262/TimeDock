@@ -189,6 +189,8 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
   .folder-card { align-items: flex-start; flex-wrap: wrap; gap: .45rem; }
   .folder-card > span:nth-child(2) { flex: 1 1 calc(100% - 2rem); }
   .folder-card .folder-badge { margin-left: 0; white-space: normal; }
+  .admin-grid { grid-template-columns: minmax(0, 1fr); }
+  .admin-card { min-width: 0; }
 }
 
 @media (min-width: 561px) and (max-width: 820px) {
