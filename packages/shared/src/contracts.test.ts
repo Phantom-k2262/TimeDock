@@ -3,8 +3,8 @@ import { ApiContract, ErrorCodeSchema, ErrorResponseSchema, FolderPermissionSche
 
 describe("shared API contracts", () => {
   it("accepts every supported role and rejects unknown roles", () => {
-    expect(RoleSchema.options).toEqual(["employee", "approver", "admin"]);
-    expect(RoleSchema.parse("admin")).toBe("admin");
+    expect(RoleSchema.options).toEqual(["system_admin", "system_operator", "verifier", "member"]);
+    expect(RoleSchema.parse("system_admin")).toBe("system_admin");
     expect(() => RoleSchema.parse("owner")).toThrow();
   });
 
@@ -16,8 +16,8 @@ describe("shared API contracts", () => {
   });
 
   it("validates users and the standard error envelope", () => {
-    expect(UserSchema.parse({ id: "00000000-0000-0000-0000-000000000000", loginId: "user001", displayName: "User", role: "employee" }).loginId).toBe("user001");
-    expect(() => UserSchema.parse({ id: "bad", loginId: "", displayName: "", role: "employee" })).toThrow();
+    expect(UserSchema.parse({ id: "00000000-0000-0000-0000-000000000000", loginId: "user001", displayName: "User", role: "member" }).loginId).toBe("user001");
+    expect(() => UserSchema.parse({ id: "bad", loginId: "", displayName: "", role: "member" })).toThrow();
     expect(ErrorCodeSchema.parse("VERSION_CONFLICT")).toBe("VERSION_CONFLICT");
     expect(ErrorResponseSchema.parse({ error: { code: "NOT_FOUND", message: "missing", requestId: "req-1" } }).error.code).toBe("NOT_FOUND");
   });
@@ -29,7 +29,7 @@ describe("shared API contracts", () => {
   it("models read-only template libraries and personal folders", () => {
     const folder = FolderSchema.parse({ id: "00000000-0000-0000-0000-000000000001", name: "Templates", kind: "template_library", ownerUserId: null, readOnly: true });
     expect(folder.readOnly).toBe(true);
-    expect(FolderPermissionSchema.parse({ folderId: folder.id, userId: null, role: "employee", canRead: true, canWrite: false }).canWrite).toBe(false);
+    expect(FolderPermissionSchema.parse({ folderId: folder.id, userId: null, role: "member", canRead: true, canWrite: false }).canWrite).toBe(false);
   });
 
   it("enforces the password policy and workspace names", () => {

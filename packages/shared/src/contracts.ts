@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RoleSchema = z.enum(["employee", "approver", "admin"]);
+export const RoleSchema = z.enum(["system_admin", "system_operator", "verifier", "member"]);
 export type Role = z.infer<typeof RoleSchema>;
 export const TimesheetStatusSchema = z.enum(["draft", "submitted", "rejected", "approved", "archived"]);
 export type TimesheetStatus = z.infer<typeof TimesheetStatusSchema>;
@@ -16,8 +16,14 @@ export const PasswordChangeRequestSchema = z.object({ currentPassword: z.string(
 export type PasswordChangeRequest = z.infer<typeof PasswordChangeRequestSchema>;
 export const AdminUserCreateRequestSchema = z.object({ loginId: z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9_-]+$/), displayName: z.string().trim().min(1).max(100), role: RoleSchema, password: PasswordPolicySchema, passwordConfirmation: z.string().min(1) });
 export type AdminUserCreateRequest = z.infer<typeof AdminUserCreateRequestSchema>;
-export const WorkspaceCreateRequestSchema = z.object({ name: z.string().trim().min(1).max(100), description: z.string().trim().max(500).optional(), memberIds: z.array(z.string().uuid()).default([]) });
+export const WorkspaceSharingModeSchema = z.enum(["shared_box", "member_scoped"]);
+export type WorkspaceSharingMode = z.infer<typeof WorkspaceSharingModeSchema>;
+export const WorkspaceVerificationModeSchema = z.enum(["none", "verified_only"]);
+export type WorkspaceVerificationMode = z.infer<typeof WorkspaceVerificationModeSchema>;
+export const WorkspaceCreateRequestSchema = z.object({ name: z.string().trim().min(1).max(100), description: z.string().trim().max(500).optional(), sharingMode: WorkspaceSharingModeSchema.default("member_scoped"), verificationMode: WorkspaceVerificationModeSchema.default("none"), memberIds: z.array(z.string().uuid()).default([]) });
 export type WorkspaceCreateRequest = z.infer<typeof WorkspaceCreateRequestSchema>;
+export const DocumentVerificationStatusSchema = z.enum(["unverified", "in_review", "returned", "verified"]);
+export type DocumentVerificationStatus = z.infer<typeof DocumentVerificationStatusSchema>;
 export const FolderPermissionModeSchema = z.enum(["whitelist", "blacklist"]);
 export type FolderPermissionMode = z.infer<typeof FolderPermissionModeSchema>;
 export const AuthSessionSchema = z.object({ user: UserSchema });

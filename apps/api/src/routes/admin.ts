@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { AdminUserCreateRequestSchema, PasswordPolicySchema, WorkspaceCreateRequestSchema } from "@timesheet/shared";
 import { hashPassword } from "../auth/password";
-import { requireAdmin } from "../auth/guard";
+import { canManageFiles, requireAccountManager, requireAdmin, requireFileManager } from "../auth/guard";
 
 type AdminBindings = { DB: D1Database; APP_ENV: string };
 export const adminRoutes = new Hono<{ Bindings: AdminBindings }>();
@@ -11,7 +11,8 @@ function error(c: any, status: 400 | 401 | 403 | 404 | 409 | 500, code: string, 
 }
 
 function user(row: Record<string, unknown>) {
-  return { id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.role, disabledAt: row.disabled_at ?? null };
+  const legacyRole = row.role === "admin" ? "system_admin" : row.role === "approver" ? "verifier" : "member";
+  return { id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole, disabledAt: row.disabled_at ?? null };
 }
 
 async function adminOrForbidden(c: any) {
@@ -19,42 +20,56 @@ async function adminOrForbidden(c: any) {
   return current ?? error(c, 403, "FORBIDDEN", "管理者権限が必要です");
 }
 
+async function accountManagerOrForbidden(c: any) {
+  const current = await requireAccountManager(c);
+  return current ?? error(c, 403, "FORBIDDEN", "アカウント管理権限が必要です");
+}
+
+async function fileManagerOrForbidden(c: any) {
+  const current = await requireFileManager(c);
+  if (current && canManageFiles(current.role)) return current;
+  return error(c, 403, "FORBIDDEN", "フォルダ管理権限が必要です");
+}
+
 adminRoutes.get("/users", async (c) => {
-  const current = await adminOrForbidden(c);
+  const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
-  const rows = await c.env.DB.prepare("SELECT id, login_id, display_name, role, disabled_at FROM users ORDER BY disabled_at IS NOT NULL, display_name").all<Record<string, unknown>>();
+  const rows = await c.env.DB.prepare("SELECT id, login_id, display_name, role, account_type, disabled_at FROM users ORDER BY disabled_at IS NOT NULL, display_name").all<Record<string, unknown>>();
   return c.json({ users: rows.results.map(user) });
 });
 
 adminRoutes.post("/users", async (c) => {
-  const current = await adminOrForbidden(c);
+  const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
   const parsed = AdminUserCreateRequestSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success || parsed.data.password !== parsed.data.passwordConfirmation) return error(c, 400, "VALIDATION_ERROR", "入力内容を確認してください。パスワードは英字・数字・記号を含む8〜20文字で、確認入力と一致させてください");
+  if (parsed.success && parsed.data.role === "system_admin" && current.role !== "system_admin") return error(c, 403, "FORBIDDEN", "システム管理者を作成できるのはシステム管理者だけです");
   const existing = await c.env.DB.prepare("SELECT id FROM users WHERE login_id = ?1").bind(parsed.data.loginId).first();
   if (existing) return error(c, 409, "CONFLICT", "そのログインIDはすでに使われています");
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   await c.env.DB.batch([
-    c.env.DB.prepare("INSERT INTO users (id, login_id, display_name, role, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)").bind(id, parsed.data.loginId, parsed.data.displayName, parsed.data.role, now),
+    c.env.DB.prepare("INSERT INTO users (id, login_id, display_name, role, account_type, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)").bind(id, parsed.data.loginId, parsed.data.displayName, parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee", parsed.data.role, now),
     c.env.DB.prepare("INSERT INTO password_credentials (user_id, hash, algorithm, params_json, updated_at) VALUES (?1, ?2, 'pbkdf2-sha256', '{\"iterations\":100000,\"hash\":\"SHA-256\",\"keyLength\":256}', ?3)").bind(id, await hashPassword(parsed.data.password), now),
   ]);
   return c.json({ user: { id, loginId: parsed.data.loginId, displayName: parsed.data.displayName, role: parsed.data.role, disabledAt: null } }, 201);
 });
 
 adminRoutes.patch("/users/:id", async (c) => {
-  const current = await adminOrForbidden(c);
+  const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
   const body = await c.req.json().catch(() => null);
-  const parsed = body && typeof body.displayName === "string" && body.displayName.trim().length > 0 && body.displayName.trim().length <= 100 && (body.role === undefined || ["employee", "approver", "admin"].includes(body.role)) ? { data: { displayName: body.displayName.trim(), role: body.role } } : null;
+  const parsed = body && typeof body.displayName === "string" && body.displayName.trim().length > 0 && body.displayName.trim().length <= 100 && (body.role === undefined || ["system_admin", "system_operator", "verifier", "member"].includes(body.role)) ? { data: { displayName: body.displayName.trim(), role: body.role } } : null;
   if (!parsed) return error(c, 400, "VALIDATION_ERROR", "アカウント名を確認してください");
-  const result = await c.env.DB.prepare("UPDATE users SET display_name = ?1, role = COALESCE(?2, role), updated_at = ?3 WHERE id = ?4").bind(parsed.data.displayName, parsed.data.role ?? null, new Date().toISOString(), c.req.param("id")).run();
+  if (parsed.data.role === "system_admin" && current.role !== "system_admin") return error(c, 403, "FORBIDDEN", "システム管理者の変更はシステム管理者だけが行えます");
+  const legacyRole = parsed.data.role === undefined ? null : parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee";
+  const result = await c.env.DB.prepare("UPDATE users SET display_name = ?1, role = COALESCE(?2, role), account_type = COALESCE(?3, account_type), updated_at = ?4 WHERE id = ?5").bind(parsed.data.displayName, legacyRole, parsed.data.role ?? null, new Date().toISOString(), c.req.param("id")).run();
   if (!result.meta.changes) return error(c, 404, "NOT_FOUND", "ユーザーが見つかりません");
   return c.json({ ok: true });
 });
 
 adminRoutes.post("/users/:id/password", async (c) => {
-  const current = await adminOrForbidden(c);
+  const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
   const body = await c.req.json().catch(() => null);
   const parsed = body && typeof body.password === "string" && typeof body.passwordConfirmation === "string" && PasswordPolicySchema.safeParse(body.password).success ? { data: body } : null;
@@ -65,7 +80,7 @@ adminRoutes.post("/users/:id/password", async (c) => {
 });
 
 adminRoutes.delete("/users/:id", async (c) => {
-  const current = await adminOrForbidden(c);
+  const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
   if (current.id === c.req.param("id")) return error(c, 400, "VALIDATION_ERROR", "自分自身は無効化できません");
   const result = await c.env.DB.prepare("UPDATE users SET disabled_at = COALESCE(disabled_at, ?1), updated_at = ?1 WHERE id = ?2").bind(new Date().toISOString(), c.req.param("id")).run();
@@ -76,8 +91,8 @@ adminRoutes.delete("/users/:id", async (c) => {
 adminRoutes.get("/workspaces", async (c) => {
   const current = await adminOrForbidden(c);
   if (!current.id) return current;
-  const rows = await c.env.DB.prepare("SELECT w.id, w.name, w.description, w.created_at, COUNT(wm.user_id) AS member_count FROM workspaces w LEFT JOIN workspace_members wm ON wm.workspace_id = w.id WHERE w.deleted_at IS NULL GROUP BY w.id ORDER BY w.created_at DESC").all<Record<string, unknown>>();
-  return c.json({ workspaces: rows.results.map((row) => ({ id: row.id, name: row.name, description: row.description, createdAt: row.created_at, memberCount: Number(row.member_count) })) });
+  const rows = await c.env.DB.prepare("SELECT w.id, w.name, w.description, w.created_at, w.sharing_mode, w.verification_mode, COUNT(wm.user_id) AS member_count FROM workspaces w LEFT JOIN workspace_members wm ON wm.workspace_id = w.id WHERE w.deleted_at IS NULL GROUP BY w.id ORDER BY w.created_at DESC").all<Record<string, unknown>>();
+  return c.json({ workspaces: rows.results.map((row) => ({ id: row.id, name: row.name, description: row.description, createdAt: row.created_at, sharingMode: row.sharing_mode, verificationMode: row.verification_mode, memberCount: Number(row.member_count) })) });
 });
 
 adminRoutes.post("/workspaces", async (c) => {
@@ -89,10 +104,10 @@ adminRoutes.post("/workspaces", async (c) => {
   const workspaceId = crypto.randomUUID();
   const rootId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const statements = [c.env.DB.prepare("INSERT INTO workspaces (id, name, description, created_by, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)").bind(workspaceId, parsed.data.name, parsed.data.description ?? null, current.id, now), c.env.DB.prepare("INSERT INTO folders (id, name, parent_id, kind, owner_user_id, read_only, created_by, created_at, updated_at, workspace_id, permission_mode) VALUES (?1, ?2, NULL, 'shared', NULL, 0, ?3, ?4, ?4, ?5, 'blacklist')").bind(rootId, parsed.data.name, current.id, now, workspaceId)];
+  const statements = [c.env.DB.prepare("INSERT INTO workspaces (id, name, description, created_by, created_at, updated_at, sharing_mode, verification_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)").bind(workspaceId, parsed.data.name, parsed.data.description ?? null, current.id, now, parsed.data.sharingMode, parsed.data.verificationMode), c.env.DB.prepare("INSERT INTO folders (id, name, parent_id, kind, owner_user_id, read_only, created_by, created_at, updated_at, workspace_id, permission_mode) VALUES (?1, ?2, NULL, 'shared', NULL, 0, ?3, ?4, ?4, ?5, 'blacklist')").bind(rootId, parsed.data.name, current.id, now, workspaceId)];
   for (const memberId of memberIds) {
     statements.push(c.env.DB.prepare("INSERT INTO workspace_members (workspace_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(workspaceId, memberId, now));
-    statements.push(c.env.DB.prepare("INSERT INTO folders (id, name, parent_id, kind, owner_user_id, read_only, created_by, created_at, updated_at, workspace_id, permission_mode) VALUES (?1, ?2, ?3, 'personal', ?4, 0, ?5, ?6, ?6, ?7, 'blacklist')").bind(crypto.randomUUID(), (await c.env.DB.prepare("SELECT display_name FROM users WHERE id = ?1").bind(memberId).first<{ display_name: string }>())?.display_name ?? "メンバー", rootId, memberId, current.id, now, workspaceId));
+    if (parsed.data.sharingMode === "member_scoped") statements.push(c.env.DB.prepare("INSERT INTO folders (id, name, parent_id, kind, owner_user_id, read_only, created_by, created_at, updated_at, workspace_id, permission_mode) VALUES (?1, ?2, ?3, 'personal', ?4, 0, ?5, ?6, ?6, ?7, 'blacklist')").bind(crypto.randomUUID(), (await c.env.DB.prepare("SELECT display_name FROM users WHERE id = ?1").bind(memberId).first<{ display_name: string }>())?.display_name ?? "メンバー", rootId, memberId, current.id, now, workspaceId));
   }
   await c.env.DB.batch(statements);
   return c.json({ workspace: { id: workspaceId, name: parsed.data.name, description: parsed.data.description ?? null, memberCount: memberIds.length } }, 201);
@@ -107,7 +122,7 @@ adminRoutes.delete("/workspaces/:id", async (c) => {
 });
 
 adminRoutes.patch("/folders/:id", async (c) => {
-  const current = await adminOrForbidden(c);
+  const current = await fileManagerOrForbidden(c);
   if (!current.id) return current;
   const body = await c.req.json().catch(() => null);
   const parsed = body && (body.name === undefined || (typeof body.name === "string" && body.name.trim().length > 0 && body.name.trim().length <= 100)) && (body.readOnly === undefined || typeof body.readOnly === "boolean") && (body.permissionMode === undefined || ["whitelist", "blacklist"].includes(body.permissionMode)) ? { data: body } : null;
@@ -118,7 +133,7 @@ adminRoutes.patch("/folders/:id", async (c) => {
 });
 
 adminRoutes.put("/folders/:id/permissions", async (c) => {
-  const current = await adminOrForbidden(c);
+  const current = await fileManagerOrForbidden(c);
   if (!current.id) return current;
   const body = await c.req.json().catch(() => null);
   const parsed = body && ["whitelist", "blacklist"].includes(body.mode) && Array.isArray(body.userIds) && body.userIds.every((id: unknown) => typeof id === "string") && (body.canWrite === undefined || typeof body.canWrite === "boolean") ? { data: { ...body, canWrite: body.canWrite ?? false } } : null;

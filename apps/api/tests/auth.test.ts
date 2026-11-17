@@ -53,7 +53,7 @@ describe("password session routes", () => {
     const cookie = login.headers.get("Set-Cookie")!.split(";")[0];
     const me = await authRoutes.request("/me", { headers: { Cookie: cookie } }, env);
     expect(me.status).toBe(200);
-    expect(((await me.json()) as { user: { role: string } }).user.role).toBe("admin");
+    expect(((await me.json()) as { user: { role: string } }).user.role).toBe("system_admin");
 
     const logout = await authRoutes.request("/logout", { method: "POST", headers: { Cookie: cookie } }, env);
     expect(logout.status).toBe(204);

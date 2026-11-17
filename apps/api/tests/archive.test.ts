@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { archiveRoutes } from "../src/routes/archive";
 import { createSessionId } from "../src/auth/session";
 
-const admin = { id: "00000000-0000-4000-8000-000000000001" };
+const admin = { id: "00000000-0000-4000-8000-000000000001", login_id: "admin", display_name: "管理者", role: "admin", account_type: "system_admin" };
 
 function environment(adminRow: Record<string, string> | null, rows: Array<{ folder_name: string; name: string; category: "timesheet" | "expense" | "receipt" | "other"; r2_key: string; size_bytes: number }> = []) {
   const db = {
     prepare(sql: string) {
       return { bind(..._args: unknown[]) { return {
-        first: async <T>() => (sql.includes("u.role = 'admin'") ? adminRow : null) as T | null,
+          first: async <T>() => (sql.includes("JOIN users u") ? adminRow : null) as T | null,
         all: async <T>() => ({ results: rows }) as { results: T[] },
       }; } };
     },
