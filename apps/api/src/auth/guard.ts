@@ -8,7 +8,7 @@ export async function getSessionUser(c: any, allowTwoFactorPending = false): Pro
   if (!row) return null;
   const legacyRole = row.role === "admin" ? "system_admin" : row.role === "approver" ? "verifier" : "member";
   if (!allowTwoFactorPending && row.account_type !== "system_admin" && row.two_factor_required !== 0 && (!row.two_factor_enrolled_at || !row.two_factor_verified_at)) return null;
-  return { ...UserSchema.parse({ id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole }), tenantId: String(row.primary_tenant_id), exportFormat: (row.export_format as SessionUser["exportFormat"]) ?? "abcs_regular", suspendedAt: row.suspended_at as string | null };
+  return { ...UserSchema.parse({ id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole }), tenantId: row.primary_tenant_id ? String(row.primary_tenant_id) : undefined, exportFormat: (row.export_format as SessionUser["exportFormat"]) ?? "abcs_regular", suspendedAt: row.suspended_at as string | null };
 }
 
 export async function requireAdmin(c: any): Promise<SessionUser | null> {

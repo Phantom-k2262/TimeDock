@@ -18,7 +18,7 @@ function error(c: any, status: 400 | 401 | 500, code: string, message: string) {
 
 function userFromRow(row: Record<string, unknown>): SessionUser {
   const legacyRole = row.role === "admin" ? "system_admin" : row.role === "approver" ? "verifier" : "member";
-  return { ...UserSchema.parse({ id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole }), tenantId: String(row.primary_tenant_id), exportFormat: (row.export_format as SessionUser["exportFormat"]) ?? "abcs_regular", suspendedAt: row.suspended_at as string | null };
+  return { ...UserSchema.parse({ id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole }), tenantId: row.primary_tenant_id ? String(row.primary_tenant_id) : undefined, exportFormat: (row.export_format as SessionUser["exportFormat"]) ?? "abcs_regular", suspendedAt: row.suspended_at as string | null };
 }
 
 export const authRoutes = new Hono<{ Bindings: AuthBindings }>();

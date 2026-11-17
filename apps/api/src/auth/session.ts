@@ -1,7 +1,7 @@
 const SESSION_COOKIE = "timesheet_session";
 const SESSION_MAX_AGE = 60 * 60 * 8;
 
-export type SessionUser = { id: string; loginId: string; displayName: string; role: "system_admin" | "system_operator" | "verifier" | "member"; tenantId: string; exportFormat?: "aaaa_sp" | "abcs_regular" | "leave_request" | "sp_report"; suspendedAt?: string | null };
+export type SessionUser = { id: string; loginId: string; displayName: string; role: "system_admin" | "system_operator" | "verifier" | "member"; tenantId?: string; exportFormat?: "aaaa_sp" | "abcs_regular" | "leave_request" | "sp_report"; suspendedAt?: string | null };
 
 function bytesToHex(bytes: Uint8Array) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");

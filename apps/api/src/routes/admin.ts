@@ -102,11 +102,13 @@ adminRoutes.post("/users", async (c) => {
   if (existing) return error(c, 409, "CONFLICT", "そのログインIDはすでに使われています");
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const tenantIds = Array.from(new Set(parsed.data.tenantIds?.length ? parsed.data.tenantIds : parsed.data.tenantId ? [parsed.data.tenantId] : [current.tenantId]));
-  const placeholders = tenantIds.map(() => "?").join(",");
-  const targetTenants = await c.env.DB.prepare(`SELECT id FROM tenants WHERE id IN (${placeholders}) AND deleted_at IS NULL`).bind(...tenantIds).all<{ id: string }>();
-  if (targetTenants.results.length !== tenantIds.length) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
-  const tenantId = tenantIds[0];
+  const tenantIds = Array.from(new Set(parsed.data.tenantIds?.length ? parsed.data.tenantIds : parsed.data.tenantId ? [parsed.data.tenantId] : []));
+  if (tenantIds.length) {
+    const placeholders = tenantIds.map(() => "?").join(",");
+    const targetTenants = await c.env.DB.prepare(`SELECT id FROM tenants WHERE id IN (${placeholders}) AND deleted_at IS NULL`).bind(...tenantIds).all<{ id: string }>();
+    if (targetTenants.results.length !== tenantIds.length) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
+  }
+  const tenantId = tenantIds[0] ?? null;
   await c.env.DB.batch([
     c.env.DB.prepare("INSERT INTO users (id, login_id, display_name, role, account_type, primary_tenant_id, export_format, two_factor_required, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)").bind(id, parsed.data.loginId, parsed.data.displayName, parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee", parsed.data.role, tenantId, parsed.data.exportFormat ?? "abcs_regular", parsed.data.role === "system_admin" ? 0 : parsed.data.twoFactorRequired === false ? 0 : 1, now),
     c.env.DB.prepare("INSERT INTO password_credentials (user_id, hash, algorithm, params_json, updated_at) VALUES (?1, ?2, 'pbkdf2-sha256', '{\"iterations\":100000,\"hash\":\"SHA-256\",\"keyLength\":256}', ?3)").bind(id, await hashPassword(parsed.data.password), now),
