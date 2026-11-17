@@ -17,7 +17,7 @@ workspaceRoutes.get("/", async (c) => {
   const allTenants = current.role === "system_admin" || current.role === "system_operator";
   const query = allTenants
     ? "SELECT w.id, w.name, w.description, w.created_at, w.tenant_id, t.name AS tenant_name, w.sharing_mode, w.verification_mode, COUNT(wm2.user_id) AS member_count FROM workspaces w JOIN tenants t ON t.id = w.tenant_id LEFT JOIN workspace_members wm2 ON wm2.workspace_id = w.id WHERE w.deleted_at IS NULL AND t.deleted_at IS NULL GROUP BY w.id ORDER BY t.name, w.created_at DESC"
-    : "SELECT w.id, w.name, w.description, w.created_at, w.tenant_id, t.name AS tenant_name, w.sharing_mode, w.verification_mode, COUNT(wm2.user_id) AS member_count FROM workspaces w JOIN tenants t ON t.id = w.tenant_id JOIN workspace_members wm ON wm.workspace_id = w.id AND wm.user_id = ?1 WHERE w.deleted_at IS NULL AND t.deleted_at IS NULL GROUP BY w.id ORDER BY t.name, w.created_at DESC";
+    : "SELECT w.id, w.name, w.description, w.created_at, w.tenant_id, t.name AS tenant_name, w.sharing_mode, w.verification_mode, COUNT(wm2.user_id) AS member_count FROM workspaces w JOIN tenants t ON t.id = w.tenant_id JOIN tenant_members tm ON tm.tenant_id = w.tenant_id AND tm.user_id = ?1 WHERE w.deleted_at IS NULL AND t.deleted_at IS NULL GROUP BY w.id ORDER BY t.name, w.created_at DESC";
   const rows = allTenants ? await c.env.DB.prepare(query).all<Record<string, unknown>>() : await c.env.DB.prepare(query).bind(current.id).all<Record<string, unknown>>();
   return c.json({ workspaces: rows.results.map((row) => ({ id: row.id, name: row.name, description: row.description, createdAt: row.created_at, tenantId: row.tenant_id, tenantName: row.tenant_name, sharingMode: row.sharing_mode, verificationMode: row.verification_mode, memberCount: Number(row.member_count) })) });
 });
@@ -55,7 +55,7 @@ workspaceRoutes.get("/:id/templates", async (c) => {
   if (!current) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
   if (current.suspendedAt) return c.json({ templates: [] });
   const workspaceId = c.req.param("id");
-  const allowed = await c.env.DB.prepare("SELECT w.id FROM workspaces w JOIN workspace_members wm ON wm.workspace_id = w.id AND wm.user_id = ?1 WHERE w.id = ?2 AND w.deleted_at IS NULL").bind(current.id, workspaceId).first();
+  const allowed = await c.env.DB.prepare("SELECT w.id FROM workspaces w JOIN tenants t ON t.id = w.tenant_id JOIN tenant_members tm ON tm.tenant_id = w.tenant_id AND tm.user_id = ?1 WHERE w.id = ?2 AND w.deleted_at IS NULL AND t.deleted_at IS NULL").bind(current.id, workspaceId).first();
   if (!allowed && current.role !== "system_admin" && current.role !== "system_operator" && current.role !== "verifier") return error(c, 403, "FORBIDDEN", "ワークスペース参照権限がありません");
   const rows = await c.env.DB.prepare("SELECT t.id, t.name, t.size_bytes, t.content_type FROM templates t JOIN folders f ON f.id = t.folder_id AND f.workspace_id = ?1 WHERE t.active = 1 ORDER BY t.created_at DESC").bind(workspaceId).all<Record<string, unknown>>();
   return c.json({ templates: rows.results.map((row) => ({ id: row.id, name: row.name, sizeBytes: Number(row.size_bytes), contentType: row.content_type })) });
@@ -64,7 +64,7 @@ workspaceRoutes.get("/:id/templates", async (c) => {
 workspaceRoutes.get("/:id/templates/:templateId/download", async (c) => {
   const current = await getSessionUser(c);
   if (!current) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
-  const allowed = await c.env.DB.prepare("SELECT w.id FROM workspaces w JOIN workspace_members wm ON wm.workspace_id = w.id AND wm.user_id = ?1 WHERE w.id = ?2 AND w.deleted_at IS NULL").bind(current.id, c.req.param("id")).first();
+  const allowed = await c.env.DB.prepare("SELECT w.id FROM workspaces w JOIN tenants t ON t.id = w.tenant_id JOIN tenant_members tm ON tm.tenant_id = w.tenant_id AND tm.user_id = ?1 WHERE w.id = ?2 AND w.deleted_at IS NULL AND t.deleted_at IS NULL").bind(current.id, c.req.param("id")).first();
   if (!allowed && current.role !== "system_admin" && current.role !== "system_operator" && current.role !== "verifier") return error(c, 403, "FORBIDDEN", "ワークスペース参照権限がありません");
   const row = await c.env.DB.prepare("SELECT t.name, t.r2_key, t.content_type FROM templates t JOIN folders f ON f.id = t.folder_id AND f.workspace_id = ?1 WHERE t.id = ?2 AND t.active = 1").bind(c.req.param("id"), c.req.param("templateId")).first<{ name: string; r2_key: string; content_type: string }>();
   if (!row) return error(c, 404, "NOT_FOUND", "テンプレートが見つかりません");
@@ -77,16 +77,16 @@ async function workspaceAccess(c: any, workspaceId: string) {
   const current = await getSessionUser(c);
   if (!current) return { current: null, allowed: false };
   if (current.suspendedAt) return { current, allowed: false };
-  const member = await c.env.DB.prepare("SELECT w.id FROM workspaces w JOIN workspace_members wm ON wm.workspace_id = w.id AND wm.user_id = ?1 WHERE w.id = ?2 AND w.deleted_at IS NULL").bind(current.id, workspaceId).first();
+  const member = await c.env.DB.prepare("SELECT w.id, w.sharing_mode FROM workspaces w JOIN tenants t ON t.id = w.tenant_id JOIN tenant_members tm ON tm.tenant_id = w.tenant_id AND tm.user_id = ?1 WHERE w.id = ?2 AND w.deleted_at IS NULL AND t.deleted_at IS NULL").bind(current.id, workspaceId).first() as { id: string; sharing_mode: string } | null;
   const elevated = current.role === "system_admin" || current.role === "system_operator" || current.role === "verifier";
-  return { current, allowed: Boolean(member) || elevated };
+  return { current, allowed: Boolean(member) || elevated, sharingMode: member?.sharing_mode ?? null };
 }
 
 workspaceRoutes.get("/:id/files", async (c) => {
   const { current, allowed } = await workspaceAccess(c, c.req.param("id"));
   if (!current) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
   if (!allowed) return error(c, 403, "FORBIDDEN", "ワークスペース参照権限がありません");
-  const rows = await c.env.DB.prepare("SELECT d.id, d.name, d.category, d.size_bytes, d.content_type, d.created_at, f.name AS folder_name FROM documents d JOIN folders f ON f.id = d.folder_id AND f.workspace_id = ?1 WHERE d.deleted_at IS NULL ORDER BY d.created_at DESC").bind(c.req.param("id")).all<Record<string, unknown>>();
+  const rows = await c.env.DB.prepare("SELECT d.id, d.name, d.category, d.size_bytes, d.content_type, d.created_at, f.name AS folder_name FROM documents d JOIN folders f ON f.id = d.folder_id AND f.workspace_id = ?1 JOIN workspaces w ON w.id = f.workspace_id WHERE d.deleted_at IS NULL AND (w.sharing_mode = 'shared_box' OR ?2 IN ('system_admin', 'system_operator', 'verifier') OR f.owner_user_id = ?3) ORDER BY d.created_at DESC").bind(c.req.param("id"), current.role, current.id).all<Record<string, unknown>>();
   return c.json({ files: rows.results.map((row) => ({ id: row.id, name: row.name, category: row.category, sizeBytes: Number(row.size_bytes), contentType: row.content_type, createdAt: row.created_at, folderName: row.folder_name })) });
 });
 
@@ -103,7 +103,7 @@ workspaceRoutes.post("/:id/files", async (c) => {
   const validationError = await validateUpload(file, maxBytes);
   if (validationError === "ファイルサイズが上限を超えています") return error(c, 413, "FILE_TOO_LARGE", validationError);
   if (validationError) return error(c, 400, "VALIDATION_ERROR", validationError);
-  const folder = await c.env.DB.prepare("SELECT f.id FROM folders f WHERE f.workspace_id = ?1 AND f.read_only = 0 AND (f.parent_id IS NULL OR f.owner_user_id = ?2) ORDER BY CASE WHEN f.owner_user_id = ?2 THEN 0 ELSE 1 END LIMIT 1").bind(c.req.param("id"), current.id).first<{ id: string }>();
+  const folder = await c.env.DB.prepare("SELECT f.id FROM folders f JOIN workspaces w ON w.id = f.workspace_id WHERE f.workspace_id = ?1 AND f.read_only = 0 AND (w.sharing_mode = 'shared_box' OR ?2 IN ('system_admin', 'system_operator', 'verifier') OR f.owner_user_id = ?3) ORDER BY CASE WHEN f.owner_user_id = ?3 THEN 0 ELSE 1 END LIMIT 1").bind(c.req.param("id"), current.role, current.id).first<{ id: string }>();
   if (!folder) return error(c, 400, "VALIDATION_ERROR", "追加可能なフォルダがありません");
   const data = new Uint8Array(await file.arrayBuffer());
   const digest = await crypto.subtle.digest("SHA-256", data);
@@ -133,7 +133,7 @@ workspaceRoutes.get("/:id/files/:fileId/download", async (c) => {
   const { current, allowed } = await workspaceAccess(c, c.req.param("id"));
   if (!current) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
   if (!allowed) return error(c, 403, "FORBIDDEN", "ワークスペース参照権限がありません");
-  const row = await c.env.DB.prepare("SELECT d.name, d.r2_key, d.content_type FROM documents d JOIN folders f ON f.id = d.folder_id AND f.workspace_id = ?1 WHERE d.id = ?2 AND d.deleted_at IS NULL").bind(c.req.param("id"), c.req.param("fileId")).first<{ name: string; r2_key: string; content_type: string }>();
+  const row = await c.env.DB.prepare("SELECT d.name, d.r2_key, d.content_type FROM documents d JOIN folders f ON f.id = d.folder_id AND f.workspace_id = ?1 JOIN workspaces w ON w.id = f.workspace_id WHERE d.id = ?2 AND d.deleted_at IS NULL AND (w.sharing_mode = 'shared_box' OR ?3 IN ('system_admin', 'system_operator', 'verifier') OR f.owner_user_id = ?4)").bind(c.req.param("id"), c.req.param("fileId"), current.role, current.id).first<{ name: string; r2_key: string; content_type: string }>();
   if (!row) return error(c, 404, "NOT_FOUND", "ファイルが見つかりません");
   const object = await c.env.FILES.get(row.r2_key);
   if (!object) return error(c, 404, "NOT_FOUND", "ファイルが見つかりません");
