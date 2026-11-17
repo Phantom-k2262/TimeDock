@@ -98,12 +98,18 @@ adminRoutes.patch("/users/:id", async (c) => {
   const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
   const body = await c.req.json().catch(() => null);
-  const parsed = body && typeof body.displayName === "string" && body.displayName.trim().length > 0 && body.displayName.trim().length <= 100 && (body.role === undefined || ["system_admin", "system_operator", "verifier", "member"].includes(body.role)) ? { data: { displayName: body.displayName.trim(), role: body.role } } : null;
+  const parsed = body && typeof body.displayName === "string" && body.displayName.trim().length > 0 && body.displayName.trim().length <= 100 && (body.role === undefined || ["system_admin", "system_operator", "verifier", "member"].includes(body.role)) && (body.tenantId === undefined || typeof body.tenantId === "string") ? { data: { displayName: body.displayName.trim(), role: body.role, tenantId: body.tenantId } } : null;
   if (!parsed) return error(c, 400, "VALIDATION_ERROR", "アカウント名を確認してください");
   if (parsed.data.role === "system_admin" && current.role !== "system_admin") return error(c, 403, "FORBIDDEN", "システム管理者の変更はシステム管理者だけが行えます");
   const legacyRole = parsed.data.role === undefined ? null : parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee";
-  const result = await c.env.DB.prepare("UPDATE users SET display_name = ?1, role = COALESCE(?2, role), account_type = COALESCE(?3, account_type), updated_at = ?4 WHERE id = ?5").bind(parsed.data.displayName, legacyRole, parsed.data.role ?? null, new Date().toISOString(), c.req.param("id")).run();
+  const targetTenantId = parsed.data.tenantId ?? undefined;
+  if (targetTenantId) {
+    const tenantExists = await c.env.DB.prepare("SELECT id FROM tenants WHERE id = ?1 AND deleted_at IS NULL").bind(targetTenantId).first();
+    if (!tenantExists) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
+  }
+  const result = await c.env.DB.prepare("UPDATE users SET display_name = ?1, role = COALESCE(?2, role), account_type = COALESCE(?3, account_type), primary_tenant_id = COALESCE(?4, primary_tenant_id), updated_at = ?5 WHERE id = ?6").bind(parsed.data.displayName, legacyRole, parsed.data.role ?? null, targetTenantId ?? null, new Date().toISOString(), c.req.param("id")).run();
   if (!result.meta.changes) return error(c, 404, "NOT_FOUND", "ユーザーが見つかりません");
+  if (targetTenantId) await c.env.DB.prepare("INSERT OR IGNORE INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(targetTenantId, c.req.param("id"), new Date().toISOString()).run();
   return c.json({ ok: true });
 });
 
