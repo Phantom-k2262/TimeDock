@@ -12,7 +12,7 @@ function error(c: any, status: 400 | 401 | 403 | 404 | 409 | 500, code: string, 
 
 function user(row: Record<string, unknown>) {
   const legacyRole = row.role === "admin" ? "system_admin" : row.role === "approver" ? "verifier" : "member";
-  return { id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole, disabledAt: row.disabled_at ?? null };
+  return { id: row.id, loginId: row.login_id, displayName: row.display_name, role: row.account_type ?? legacyRole, disabledAt: row.disabled_at ?? null, twoFactorRequired: row.two_factor_required !== 0, twoFactorEnrolled: Boolean(row.two_factor_enrolled_at) };
 }
 
 async function adminOrForbidden(c: any) {
@@ -34,7 +34,7 @@ async function fileManagerOrForbidden(c: any) {
 adminRoutes.get("/users", async (c) => {
   const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;
-  const rows = await c.env.DB.prepare("SELECT id, login_id, display_name, role, account_type, disabled_at FROM users ORDER BY disabled_at IS NOT NULL, display_name").all<Record<string, unknown>>();
+  const rows = await c.env.DB.prepare("SELECT id, login_id, display_name, role, account_type, disabled_at, two_factor_required, two_factor_enrolled_at FROM users ORDER BY disabled_at IS NOT NULL, display_name").all<Record<string, unknown>>();
   return c.json({ users: rows.results.map(user) });
 });
 
@@ -77,6 +77,18 @@ adminRoutes.post("/users/:id/password", async (c) => {
   const result = await c.env.DB.prepare("UPDATE password_credentials SET hash = ?1, updated_at = ?2, failed_attempts = 0, blocked_until = NULL WHERE user_id = ?3").bind(await hashPassword(parsed.data.password), new Date().toISOString(), c.req.param("id")).run();
   if (!result.meta.changes) return error(c, 404, "NOT_FOUND", "ユーザーが見つかりません");
   return c.body(null, 204);
+});
+
+adminRoutes.patch("/users/:id/2fa", async (c) => {
+  const current = await accountManagerOrForbidden(c);
+  if (!current.id) return current;
+  const body = await c.req.json().catch(() => null) as { required?: unknown } | null;
+  if (typeof body?.required !== "boolean") return error(c, 400, "VALIDATION_ERROR", "二段階認証の設定を確認してください");
+  const target = await c.env.DB.prepare("SELECT account_type, role FROM users WHERE id = ?1").bind(c.req.param("id")).first<{ account_type?: string; role?: string }>();
+  if (!target) return error(c, 404, "NOT_FOUND", "ユーザーが見つかりません");
+  if (target.account_type === "system_admin" || target.role === "admin") return error(c, 400, "VALIDATION_ERROR", "システム管理者には二段階認証を設定できません");
+  await c.env.DB.prepare("UPDATE users SET two_factor_required = ?1, updated_at = ?2 WHERE id = ?3").bind(body.required ? 1 : 0, new Date().toISOString(), c.req.param("id")).run();
+  return c.json({ ok: true, required: body.required });
 });
 
 adminRoutes.delete("/users/:id", async (c) => {

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { PasswordChangeRequestSchema, PasswordLoginRequestSchema, UserSchema } from "@timesheet/shared";
 import { hashPassword, verifyPassword } from "./password";
 import { getSessionUser } from "./guard";
+import { generateTotpSecret, totpUri, verifyTotp } from "./totp";
 import { clearSessionCookie, createSessionId, hashSessionId, readSessionId, sessionCookie, sessionMaxAge, type SessionUser } from "./session";
 
 export type AuthBindings = { DB: D1Database; APP_ENV: string };
@@ -23,7 +24,7 @@ authRoutes.post("/password/login", async (c) => {
   if (!parsed.success) return error(c, 400, "VALIDATION_ERROR", "ログインIDまたはパスワードが正しくありません");
   if (!c.env.DB) return error(c, 500, "INTERNAL_ERROR", "認証サービスを利用できません");
 
-  const result = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, p.hash FROM users u JOIN password_credentials p ON p.user_id = u.id WHERE u.login_id = ?1 AND u.disabled_at IS NULL").bind(parsed.data.loginId).first<Record<string, unknown>>();
+  const result = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.two_factor_required, u.two_factor_enrolled_at, p.hash FROM users u JOIN password_credentials p ON p.user_id = u.id WHERE u.login_id = ?1 AND u.disabled_at IS NULL").bind(parsed.data.loginId).first<Record<string, unknown>>();
   const valid = result ? await verifyPassword(parsed.data.password, String(result.hash)) : false;
   if (!valid || !result) return error(c, 401, "UNAUTHENTICATED", "ログインIDまたはパスワードが正しくありません");
 
@@ -31,16 +32,43 @@ authRoutes.post("/password/login", async (c) => {
   const sessionId = createSessionId();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + sessionMaxAge() * 1000).toISOString();
-  await c.env.DB.prepare("INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?3)").bind(await hashSessionId(sessionId), user.id, now.toISOString(), expiresAt).run();
+  await c.env.DB.prepare("INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at, two_factor_verified_at) VALUES (?1, ?2, ?3, ?4, ?3, ?5)").bind(await hashSessionId(sessionId), user.id, now.toISOString(), expiresAt, user.role === "system_admin" || result.two_factor_required === 0 ? now.toISOString() : null).run();
   c.header("Set-Cookie", sessionCookie(sessionId));
-  return c.json({ user });
+  return c.json({ user, twoFactor: { required: user.role !== "system_admin" && result.two_factor_required !== 0, enrolled: Boolean(result.two_factor_enrolled_at), verified: user.role === "system_admin" || result.two_factor_required === 0 } });
 });
 authRoutes.get("/me", async (c) => {
   const sessionId = readSessionId(c.req.raw);
   if (!sessionId || !c.env.DB) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
-  const row = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ?1 AND s.revoked_at IS NULL AND s.expires_at > ?2 AND u.disabled_at IS NULL").bind(await hashSessionId(sessionId), new Date().toISOString()).first<Record<string, unknown>>();
+  const row = await c.env.DB.prepare("SELECT u.id, u.login_id, u.display_name, u.role, u.account_type, u.two_factor_required, u.two_factor_enrolled_at, s.two_factor_verified_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ?1 AND s.revoked_at IS NULL AND s.expires_at > ?2 AND u.disabled_at IS NULL").bind(await hashSessionId(sessionId), new Date().toISOString()).first<Record<string, unknown>>();
   if (!row) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
-  return c.json({ user: userFromRow(row) });
+  const user = userFromRow(row);
+  return c.json({ user, twoFactor: { required: user.role !== "system_admin" && row.two_factor_required !== 0, enrolled: Boolean(row.two_factor_enrolled_at), verified: user.role === "system_admin" || row.two_factor_required === 0 || Boolean(row.two_factor_verified_at) } });
+});
+
+authRoutes.post("/2fa/setup", async (c) => {
+  const user = await getSessionUser(c, true);
+  if (!user) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
+  if (user.role === "system_admin") return error(c, 400, "VALIDATION_ERROR", "システム管理者には二段階認証は必要ありません");
+  const existing = await c.env.DB.prepare("SELECT two_factor_secret, two_factor_enrolled_at FROM users WHERE id = ?1").bind(user.id).first<{ two_factor_secret: string | null; two_factor_enrolled_at: string | null }>();
+  const secret = existing?.two_factor_enrolled_at && existing.two_factor_secret ? existing.two_factor_secret : generateTotpSecret();
+  if (!existing?.two_factor_enrolled_at) await c.env.DB.prepare("UPDATE users SET two_factor_secret = ?1, updated_at = ?2 WHERE id = ?3").bind(secret, new Date().toISOString(), user.id).run();
+  return c.json({ secret, uri: totpUri(secret, user.loginId) });
+});
+
+authRoutes.post("/2fa/verify", async (c) => {
+  const user = await getSessionUser(c, true);
+  if (!user) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
+  const body = await c.req.json().catch(() => null) as { code?: unknown } | null;
+  const code = typeof body?.code === "string" ? body.code : "";
+  const row = await c.env.DB.prepare("SELECT two_factor_secret FROM users WHERE id = ?1").bind(user.id).first<{ two_factor_secret: string | null }>();
+  if (!row?.two_factor_secret || !(await verifyTotp(row.two_factor_secret, code))) return error(c, 401, "UNAUTHENTICATED", "認証コードが正しくありません");
+  const now = new Date().toISOString();
+  const sessionId = readSessionId(c.req.raw);
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE users SET two_factor_enrolled_at = COALESCE(two_factor_enrolled_at, ?1), updated_at = ?1 WHERE id = ?2").bind(now, user.id),
+    c.env.DB.prepare("UPDATE sessions SET two_factor_verified_at = ?1 WHERE id_hash = ?2 AND user_id = ?3").bind(now, await hashSessionId(sessionId!), user.id),
+  ]);
+  return c.json({ ok: true });
 });
 
 authRoutes.post("/logout", async (c) => {
