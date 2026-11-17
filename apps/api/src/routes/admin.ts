@@ -106,7 +106,6 @@ adminRoutes.post("/users", async (c) => {
     c.env.DB.prepare("INSERT INTO users (id, login_id, display_name, role, account_type, primary_tenant_id, two_factor_required, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)").bind(id, parsed.data.loginId, parsed.data.displayName, parsed.data.role === "system_admin" ? "admin" : parsed.data.role === "verifier" ? "approver" : "employee", parsed.data.role, tenantId, parsed.data.role === "system_admin" ? 0 : parsed.data.twoFactorRequired === false ? 0 : 1, now),
     c.env.DB.prepare("INSERT INTO password_credentials (user_id, hash, algorithm, params_json, updated_at) VALUES (?1, ?2, 'pbkdf2-sha256', '{\"iterations\":100000,\"hash\":\"SHA-256\",\"keyLength\":256}', ?3)").bind(id, await hashPassword(parsed.data.password), now),
     ...tenantIds.map((assignedTenantId) => c.env.DB.prepare("INSERT INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(assignedTenantId, id, now)),
-    c.env.DB.prepare(`INSERT OR IGNORE INTO workspace_members (workspace_id, user_id, created_at) SELECT id, ?1, ?2 FROM workspaces WHERE tenant_id IN (${placeholders}) AND deleted_at IS NULL`).bind(id, now, ...tenantIds),
   ]);
   return c.json({ user: { id, loginId: parsed.data.loginId, displayName: parsed.data.displayName, role: parsed.data.role, tenantId, disabledAt: null } }, 201);
 });
@@ -129,12 +128,7 @@ adminRoutes.patch("/users/:id", async (c) => {
   if (!result.meta.changes) return error(c, 404, "NOT_FOUND", "ユーザーが見つかりません");
   if (assignedTenantIds.length) {
     await c.env.DB.prepare("DELETE FROM tenant_members WHERE user_id = ?1").bind(c.req.param("id")).run();
-    const membershipUpdatedAt = new Date().toISOString();
-    await c.env.DB.batch([
-      ...assignedTenantIds.map((assignedTenantId) => c.env.DB.prepare("INSERT INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(assignedTenantId, c.req.param("id"), membershipUpdatedAt)),
-      c.env.DB.prepare(`DELETE FROM workspace_members WHERE user_id = ?1 AND workspace_id IN (SELECT id FROM workspaces WHERE tenant_id NOT IN (${assignedTenantIds.map(() => "?").join(",")}))`).bind(c.req.param("id"), ...assignedTenantIds),
-      c.env.DB.prepare(`INSERT OR IGNORE INTO workspace_members (workspace_id, user_id, created_at) SELECT id, ?1, ?2 FROM workspaces WHERE tenant_id IN (${assignedTenantIds.map(() => "?").join(",")}) AND deleted_at IS NULL`).bind(c.req.param("id"), membershipUpdatedAt, ...assignedTenantIds),
-    ]);
+    await c.env.DB.batch(assignedTenantIds.map((assignedTenantId) => c.env.DB.prepare("INSERT INTO tenant_members (tenant_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(assignedTenantId, c.req.param("id"), new Date().toISOString())));
   }
   return c.json({ ok: true });
 });
