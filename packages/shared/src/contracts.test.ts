@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiContract, ErrorCodeSchema, ErrorResponseSchema, FolderPermissionSchema, FolderSchema, LockStateSchema, RoleSchema, TimesheetStatusSchema, UserSchema } from "./contracts.js";
+import { ApiContract, ErrorCodeSchema, ErrorResponseSchema, FolderPermissionSchema, FolderSchema, LockStateSchema, PasswordPolicySchema, RoleSchema, TimesheetStatusSchema, UserSchema, WorkspaceCreateRequestSchema } from "./contracts.js";
 
 describe("shared API contracts", () => {
   it("accepts every supported role and rejects unknown roles", () => {
@@ -30,5 +30,12 @@ describe("shared API contracts", () => {
     const folder = FolderSchema.parse({ id: "00000000-0000-0000-0000-000000000001", name: "Templates", kind: "template_library", ownerUserId: null, readOnly: true });
     expect(folder.readOnly).toBe(true);
     expect(FolderPermissionSchema.parse({ folderId: folder.id, userId: null, role: "employee", canRead: true, canWrite: false }).canWrite).toBe(false);
+  });
+
+  it("enforces the password policy and workspace names", () => {
+    expect(PasswordPolicySchema.safeParse("Abcd1234!").success).toBe(true);
+    expect(PasswordPolicySchema.safeParse("onlyletters").success).toBe(false);
+    expect(PasswordPolicySchema.safeParse("A1!").success).toBe(false);
+    expect(WorkspaceCreateRequestSchema.parse({ name: "年末調整" }).name).toBe("年末調整");
   });
 });

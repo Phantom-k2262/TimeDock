@@ -1,6 +1,7 @@
 import { Hono } from "hono";
-import { PasswordLoginRequestSchema, UserSchema } from "@timesheet/shared";
-import { verifyPassword } from "./password";
+import { PasswordChangeRequestSchema, PasswordLoginRequestSchema, UserSchema } from "@timesheet/shared";
+import { hashPassword, verifyPassword } from "./password";
+import { getSessionUser } from "./guard";
 import { clearSessionCookie, createSessionId, hashSessionId, readSessionId, sessionCookie, sessionMaxAge, type SessionUser } from "./session";
 
 export type AuthBindings = { DB: D1Database; APP_ENV: string };
@@ -33,7 +34,6 @@ authRoutes.post("/password/login", async (c) => {
   c.header("Set-Cookie", sessionCookie(sessionId));
   return c.json({ user });
 });
-
 authRoutes.get("/me", async (c) => {
   const sessionId = readSessionId(c.req.raw);
   if (!sessionId || !c.env.DB) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
@@ -46,5 +46,18 @@ authRoutes.post("/logout", async (c) => {
   const sessionId = readSessionId(c.req.raw);
   if (sessionId && c.env.DB) await c.env.DB.prepare("UPDATE sessions SET revoked_at = ?1 WHERE id_hash = ?2 AND revoked_at IS NULL").bind(new Date().toISOString(), await hashSessionId(sessionId)).run();
   c.header("Set-Cookie", clearSessionCookie());
+  return c.body(null, 204);
+});
+
+authRoutes.post("/password/change", async (c) => {
+  const user = await getSessionUser(c);
+  if (!user) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
+  const body = await c.req.json().catch(() => null);
+  const parsed = PasswordChangeRequestSchema.safeParse(body);
+  if (!parsed.success || parsed.data.password !== parsed.data.passwordConfirmation) return error(c, 400, "VALIDATION_ERROR", "パスワードは英字・数字・記号を含む8〜20文字で、確認入力と一致させてください");
+  const current = await c.env.DB.prepare("SELECT hash FROM password_credentials WHERE user_id = ?1").bind(user.id).first<{ hash: string }>();
+  if (!current || !(await verifyPassword(parsed.data.currentPassword, current.hash))) return error(c, 401, "UNAUTHENTICATED", "現在のパスワードが正しくありません");
+  const nextHash = await hashPassword(parsed.data.password);
+  await c.env.DB.prepare("UPDATE password_credentials SET hash = ?1, updated_at = ?2, failed_attempts = 0, blocked_until = NULL WHERE user_id = ?3").bind(nextHash, new Date().toISOString(), user.id).run();
   return c.body(null, 204);
 });

@@ -11,6 +11,15 @@ export const UserSchema = z.object({ id: z.string().uuid(), loginId: z.string().
 export type User = z.infer<typeof UserSchema>;
 export const PasswordLoginRequestSchema = z.object({ loginId: z.string().trim().min(1).max(100), password: z.string().min(8).max(256) });
 export type PasswordLoginRequest = z.infer<typeof PasswordLoginRequestSchema>;
+export const PasswordPolicySchema = z.string().regex(/^(?=.{8,20}$)(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9])[\x21-\x7E]+$/, "英字・数字・記号を含む8〜20文字で入力してください");
+export const PasswordChangeRequestSchema = z.object({ currentPassword: z.string().min(1), password: PasswordPolicySchema, passwordConfirmation: z.string().min(1) });
+export type PasswordChangeRequest = z.infer<typeof PasswordChangeRequestSchema>;
+export const AdminUserCreateRequestSchema = z.object({ loginId: z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9_-]+$/), displayName: z.string().trim().min(1).max(100), role: RoleSchema, password: PasswordPolicySchema, passwordConfirmation: z.string().min(1) });
+export type AdminUserCreateRequest = z.infer<typeof AdminUserCreateRequestSchema>;
+export const WorkspaceCreateRequestSchema = z.object({ name: z.string().trim().min(1).max(100), description: z.string().trim().max(500).optional(), memberIds: z.array(z.string().uuid()).default([]) });
+export type WorkspaceCreateRequest = z.infer<typeof WorkspaceCreateRequestSchema>;
+export const FolderPermissionModeSchema = z.enum(["whitelist", "blacklist"]);
+export type FolderPermissionMode = z.infer<typeof FolderPermissionModeSchema>;
 export const AuthSessionSchema = z.object({ user: UserSchema });
 export type AuthSession = z.infer<typeof AuthSessionSchema>;
 export const FolderKindSchema = z.enum(["template_library", "personal", "shared"]);
