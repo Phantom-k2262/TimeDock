@@ -131,6 +131,10 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 .file-action-menu-list a, .file-action-menu-list label, .file-action-menu-list button { display: block; width: 100%; padding: .55rem .65rem; border: 0; border-radius: .3rem; color: #334155; background: transparent; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .file-action-menu-list a:hover, .file-action-menu-list label:hover, .file-action-menu-list button:hover { background: #f3f5f9; }
 .file-action-menu-list .danger-button { color: #b42318; }
+.permission-menu { min-width: 240px; max-width: min(320px, calc(100vw - 2rem)); }
+.permission-menu strong { display: block; padding: .45rem .65rem .3rem; color: #263653; }
+.permission-user-list { display: grid; gap: .35rem; max-height: 12rem; overflow: auto; padding: .4rem 0; border-top: 1px solid #eef0f4; }
+.workspace-permission-menu { margin-left: 0; }
 .tenant-assignment { display: grid; gap: .45rem; margin: 0; padding: .75rem; border: 1px solid #cbd3e1; border-radius: .45rem; }
 .tenant-assignment legend { padding: 0 .25rem; color: #334155; font-weight: 700; }
 .tenant-assignment label { display: flex; grid-template-columns: none; align-items: center; gap: .45rem; font-weight: 500; }

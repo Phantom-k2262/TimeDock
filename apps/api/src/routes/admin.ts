@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { AdminUserCreateRequestSchema, PasswordPolicySchema, WorkspaceCreateRequestSchema } from "@timesheet/shared";
 import { hashPassword } from "../auth/password";
-import { canManageFiles, requireAccountManager, requireAdmin, requireFileManager } from "../auth/guard";
+import { canManageFiles, requireAccountManager, requireAdmin, requireFileManager, requireWorkspaceManager } from "../auth/guard";
 
 type AdminBindings = { DB: D1Database; APP_ENV: string };
 export const adminRoutes = new Hono<{ Bindings: AdminBindings }>();
@@ -33,6 +33,11 @@ async function fileManagerOrForbidden(c: any) {
   const current = await requireFileManager(c);
   if (current && canManageFiles(current.role)) return current;
   return error(c, 403, "FORBIDDEN", "フォルダ管理権限が必要です");
+}
+
+async function workspaceManagerOrForbidden(c: any) {
+  const current = await requireWorkspaceManager(c);
+  return current ?? error(c, 403, "FORBIDDEN", "ワークスペース管理権限が必要です");
 }
 
 adminRoutes.get("/users", async (c) => {
@@ -194,25 +199,33 @@ adminRoutes.patch("/users/:id/suspension", async (c) => {
 });
 
 adminRoutes.get("/workspaces", async (c) => {
-  const current = await accountManagerOrForbidden(c);
+  const current = await workspaceManagerOrForbidden(c);
   if (!current.id) return current;
-  const rows = await c.env.DB.prepare("SELECT w.id, w.name, w.description, w.created_at, w.tenant_id, t.name AS tenant_name, w.sharing_mode, w.verification_mode, COUNT(wm.user_id) AS member_count FROM workspaces w JOIN tenants t ON t.id = w.tenant_id LEFT JOIN workspace_members wm ON wm.workspace_id = w.id WHERE w.deleted_at IS NULL AND t.deleted_at IS NULL GROUP BY w.id ORDER BY t.name, w.created_at DESC").all<Record<string, unknown>>();
+  const query = current.role === "verifier"
+    ? "SELECT w.id, w.name, w.description, w.created_at, w.tenant_id, t.name AS tenant_name, w.sharing_mode, w.verification_mode, COUNT(wm.user_id) AS member_count FROM workspaces w JOIN tenants t ON t.id = w.tenant_id JOIN tenant_members tm ON tm.tenant_id = w.tenant_id AND tm.user_id = ?1 LEFT JOIN workspace_members wm ON wm.workspace_id = w.id WHERE w.deleted_at IS NULL AND t.deleted_at IS NULL GROUP BY w.id ORDER BY t.name, w.created_at DESC"
+    : "SELECT w.id, w.name, w.description, w.created_at, w.tenant_id, t.name AS tenant_name, w.sharing_mode, w.verification_mode, COUNT(wm.user_id) AS member_count FROM workspaces w JOIN tenants t ON t.id = w.tenant_id LEFT JOIN workspace_members wm ON wm.workspace_id = w.id WHERE w.deleted_at IS NULL AND t.deleted_at IS NULL GROUP BY w.id ORDER BY t.name, w.created_at DESC";
+  const rows = current.role === "verifier" ? await c.env.DB.prepare(query).bind(current.id).all<Record<string, unknown>>() : await c.env.DB.prepare(query).all<Record<string, unknown>>();
   return c.json({ workspaces: rows.results.map((row) => ({ id: row.id, name: row.name, description: row.description, createdAt: row.created_at, tenantId: row.tenant_id, tenantName: row.tenant_name, sharingMode: row.sharing_mode, verificationMode: row.verification_mode, memberCount: Number(row.member_count) })) });
 });
 
 adminRoutes.post("/workspaces", async (c) => {
-  const current = await accountManagerOrForbidden(c);
+  const current = await workspaceManagerOrForbidden(c);
   if (!current.id) return current;
   const parsed = WorkspaceCreateRequestSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return error(c, 400, "VALIDATION_ERROR", "ワークスペース名を確認してください");
   const tenantId = parsed.data.tenantId ?? current.tenantId;
   const tenantExists = await c.env.DB.prepare("SELECT id FROM tenants WHERE id = ?1 AND deleted_at IS NULL").bind(tenantId).first();
   if (!tenantExists) return error(c, 400, "VALIDATION_ERROR", "テナントを確認してください");
+  if (current.role === "verifier" && !await c.env.DB.prepare("SELECT 1 FROM tenant_members WHERE tenant_id = ?1 AND user_id = ?2").bind(tenantId, current.id).first()) return error(c, 403, "FORBIDDEN", "所属テナント以外には作成できません");
   const memberIds = parsed.data.memberIds.length ? parsed.data.memberIds : (await c.env.DB.prepare("SELECT u.id FROM users u JOIN tenant_members tm ON tm.user_id = u.id AND tm.tenant_id = ?1 WHERE u.disabled_at IS NULL").bind(tenantId).all<{ id: string }>()).results.map((row) => row.id);
+  const permissionUserIds = parsed.data.sharingMode === "shared_box" ? Array.from(new Set(parsed.data.permissionUserIds)) : [];
+  const permissionUsers = permissionUserIds.length ? await c.env.DB.prepare(`SELECT u.id FROM users u JOIN tenant_members tm ON tm.user_id = u.id AND tm.tenant_id = ?1 WHERE u.disabled_at IS NULL AND u.id IN (${permissionUserIds.map(() => "?").join(",")})`).bind(tenantId, ...permissionUserIds).all<{ id: string }>() : { results: [] };
+  if (permissionUsers.results.length !== permissionUserIds.length) return error(c, 400, "VALIDATION_ERROR", "参照権限のユーザーを確認してください");
   const workspaceId = crypto.randomUUID();
   const rootId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const statements = [c.env.DB.prepare("INSERT INTO workspaces (id, name, description, created_by, created_at, updated_at, tenant_id, sharing_mode, verification_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8)").bind(workspaceId, parsed.data.name, parsed.data.description ?? null, current.id, now, tenantId, parsed.data.sharingMode, parsed.data.verificationMode), c.env.DB.prepare("INSERT INTO folders (id, name, parent_id, kind, owner_user_id, read_only, created_by, created_at, updated_at, workspace_id, permission_mode) VALUES (?1, ?2, NULL, 'shared', NULL, 0, ?3, ?4, ?4, ?5, 'blacklist')").bind(rootId, parsed.data.name, current.id, now, workspaceId)];
+  const statements = [c.env.DB.prepare("INSERT INTO workspaces (id, name, description, created_by, created_at, updated_at, tenant_id, sharing_mode, verification_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8)").bind(workspaceId, parsed.data.name, parsed.data.description ?? null, current.id, now, tenantId, parsed.data.sharingMode, parsed.data.verificationMode), c.env.DB.prepare("INSERT INTO folders (id, name, parent_id, kind, owner_user_id, read_only, created_by, created_at, updated_at, workspace_id, permission_mode) VALUES (?1, ?2, NULL, 'shared', NULL, 0, ?3, ?4, ?4, ?5, ?6)").bind(rootId, parsed.data.name, current.id, now, workspaceId, parsed.data.permissionMode)];
+  for (const permissionUserId of permissionUserIds) statements.push(c.env.DB.prepare("INSERT INTO folder_permissions (id, folder_id, user_id, role, can_read, can_write, created_at) VALUES (?1, ?2, ?3, NULL, 1, 0, ?4)").bind(crypto.randomUUID(), rootId, permissionUserId, now));
   for (const memberId of memberIds) {
     statements.push(c.env.DB.prepare("INSERT INTO workspace_members (workspace_id, user_id, created_at) VALUES (?1, ?2, ?3)").bind(workspaceId, memberId, now));
     if (parsed.data.sharingMode === "member_scoped") statements.push(c.env.DB.prepare("INSERT INTO folders (id, name, parent_id, kind, owner_user_id, read_only, created_by, created_at, updated_at, workspace_id, permission_mode) VALUES (?1, ?2, ?3, 'personal', ?4, 0, ?5, ?6, ?6, ?7, 'blacklist')").bind(crypto.randomUUID(), (await c.env.DB.prepare("SELECT display_name FROM users WHERE id = ?1").bind(memberId).first<{ display_name: string }>())?.display_name ?? "メンバー", rootId, memberId, current.id, now, workspaceId));
@@ -222,9 +235,11 @@ adminRoutes.post("/workspaces", async (c) => {
 });
 
 adminRoutes.delete("/workspaces/:id", async (c) => {
-  const current = await accountManagerOrForbidden(c);
+  const current = await workspaceManagerOrForbidden(c);
   if (!current.id) return current;
-  const result = await c.env.DB.prepare("UPDATE workspaces SET deleted_at = COALESCE(deleted_at, ?1), updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL").bind(new Date().toISOString(), c.req.param("id")).run();
+  const result = current.role === "verifier"
+    ? await c.env.DB.prepare("UPDATE workspaces SET deleted_at = COALESCE(deleted_at, ?1), updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id = workspaces.tenant_id AND tm.user_id = ?3)").bind(new Date().toISOString(), c.req.param("id"), current.id).run()
+    : await c.env.DB.prepare("UPDATE workspaces SET deleted_at = COALESCE(deleted_at, ?1), updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL").bind(new Date().toISOString(), c.req.param("id")).run();
   if (!result.meta.changes) return error(c, 404, "NOT_FOUND", "ワークスペースが見つかりません");
   return c.body(null, 204);
 });

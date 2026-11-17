@@ -26,6 +26,11 @@ export async function requireFileManager(c: any): Promise<SessionUser | null> {
   return (user?.role === "system_admin" || user?.role === "verifier") && !user.suspendedAt ? user : null;
 }
 
+export async function requireWorkspaceManager(c: any): Promise<SessionUser | null> {
+  const user = await getSessionUser(c);
+  return (user?.role === "system_admin" || user?.role === "system_operator" || user?.role === "verifier") && !user.suspendedAt ? user : null;
+}
+
 export function canManageFiles(role: SessionUser["role"]) {
   return role === "system_admin" || role === "verifier";
 }
