@@ -154,7 +154,8 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       const day = Number(String(entry.work_date ?? "").slice(-2));
       if (!Number.isInteger(day) || day < 1 || day > 31) return;
       const column = excelColumn(3 + day);
-      xml = patchCells(xml, [[`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true]]);
+      const workCode = typeof entry.work_code === "string" && entry.work_code ? entry.work_code : "D";
+      xml = patchCells(xml, [[`${column}9`, workCode], [`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true], [`${column}13`, entry.project_name ?? ""]]);
     });
     entries["xl/worksheets/sheet3.xml"] = strToU8(xml);
   }
