@@ -136,6 +136,21 @@ adminRoutes.patch("/users/:id/2fa", async (c) => {
   return c.json({ ok: true, required: body.required });
 });
 
+adminRoutes.post("/users/:id/2fa/reset", async (c) => {
+  const current = await accountManagerOrForbidden(c);
+  if (!current.id) return current;
+  const targetId = c.req.param("id");
+  const target = await c.env.DB.prepare("SELECT account_type, role FROM users WHERE id = ?1 AND disabled_at IS NULL").bind(targetId).first<{ account_type?: string; role?: string }>();
+  if (!target) return error(c, 404, "NOT_FOUND", "ユーザーが見つかりません");
+  if (target.account_type === "system_admin" || target.role === "admin") return error(c, 400, "VALIDATION_ERROR", "システム管理者の二段階認証はリセットできません");
+  const now = new Date().toISOString();
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE users SET two_factor_secret = NULL, two_factor_enrolled_at = NULL, two_factor_required = 1, updated_at = ?1 WHERE id = ?2").bind(now, targetId),
+    c.env.DB.prepare("UPDATE sessions SET revoked_at = COALESCE(revoked_at, ?1) WHERE user_id = ?2").bind(now, targetId),
+  ]);
+  return c.json({ ok: true, required: true });
+});
+
 adminRoutes.delete("/users/:id", async (c) => {
   const current = await accountManagerOrForbidden(c);
   if (!current.id) return current;

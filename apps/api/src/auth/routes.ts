@@ -50,7 +50,8 @@ authRoutes.post("/2fa/setup", async (c) => {
   if (!user) return error(c, 401, "UNAUTHENTICATED", "ログインが必要です");
   if (user.role === "system_admin") return error(c, 400, "VALIDATION_ERROR", "システム管理者には二段階認証は必要ありません");
   const existing = await c.env.DB.prepare("SELECT two_factor_secret, two_factor_enrolled_at FROM users WHERE id = ?1").bind(user.id).first<{ two_factor_secret: string | null; two_factor_enrolled_at: string | null }>();
-  const secret = existing?.two_factor_enrolled_at && existing.two_factor_secret ? existing.two_factor_secret : generateTotpSecret();
+  if (existing?.two_factor_enrolled_at) return error(c, 400, "VALIDATION_ERROR", "二段階認証は登録済みです。再登録する場合は管理者にリセットを依頼してください");
+  const secret = generateTotpSecret();
   if (!existing?.two_factor_enrolled_at) await c.env.DB.prepare("UPDATE users SET two_factor_secret = ?1, updated_at = ?2 WHERE id = ?3").bind(secret, new Date().toISOString(), user.id).run();
   return c.json({ secret, uri: totpUri(secret, user.loginId) });
 });
