@@ -1,17 +1,33 @@
 import { Hono } from "hono";
 import { AttendanceExportFormatSchema } from "@timesheet/shared";
 import { getSessionUser } from "../auth/guard";
-import { createAttendanceWorkbook } from "../attendance/export";
+import { attendanceFilename, createAttendanceWorkbookFromTemplate } from "../attendance/export";
 
-type Bindings = { DB: D1Database; APP_ENV: string };
+type Bindings = { DB: D1Database; FILES: R2Bucket; APP_ENV: string };
 export const attendanceRoutes = new Hono<{ Bindings: Bindings }>();
 
-function error(c: any, status: 400 | 401 | 403 | 404, message: string) {
-  return c.json({ error: { code: status === 401 ? "UNAUTHENTICATED" : status === 403 ? "FORBIDDEN" : status === 404 ? "NOT_FOUND" : "VALIDATION_ERROR", message, requestId: c.get("requestId") ?? crypto.randomUUID() } }, status);
+function error(c: any, status: 400 | 401 | 403 | 404 | 503, message: string) {
+  return c.json({ error: { code: status === 401 ? "UNAUTHENTICATED" : status === 403 ? "FORBIDDEN" : status === 404 ? "NOT_FOUND" : status === 503 ? "TEMPLATE_NOT_CONFIGURED" : "VALIDATION_ERROR", message, requestId: c.get("requestId") ?? crypto.randomUUID() } }, status);
 }
 
 function month(value: unknown) {
   return typeof value === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : null;
+}
+
+const templatePatterns: Record<string, string> = {
+  aaaa_sp: "%作業実績表（SP派遣用）%",
+  abcs_regular: "ABCS正社員（普通）勤務表%",
+  leave_request: "休暇・遅刻・早退申請書%",
+  sp_report: "作業報告書・作業実績報告書(SP用)%",
+};
+
+async function attendanceTemplate(c: any, format: string) {
+  const pattern = templatePatterns[format];
+  if (!pattern) return null;
+  const row = await c.env.DB.prepare("SELECT id, name, r2_key FROM templates WHERE active = 1 AND name LIKE ?1 ORDER BY created_at DESC LIMIT 1").bind(pattern).first() as { id: string; name: string; r2_key: string } | null;
+  if (!row) return null;
+  const object = await c.env.FILES.get(row.r2_key);
+  return object ? { ...row, data: new Uint8Array(await object.arrayBuffer()) } : null;
 }
 
 async function currentUser(c: any) {
@@ -134,7 +150,10 @@ attendanceRoutes.get("/export", async (c) => {
     c.env.DB.prepare("SELECT expense_date, category, amount, description FROM expense_items WHERE user_id = ?1 AND target_month = ?2 ORDER BY expense_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT summary, achievements, next_steps FROM monthly_reports WHERE user_id = ?1 AND target_month = ?2").bind(user.id, targetMonth).first<Record<string, unknown>>(),
   ]);
-  const workbook = createAttendanceWorkbook({ format, month: targetMonth, generatedAt: new Date().toISOString(), profile: profileRow ?? { display_name: user.displayName }, entries: entries.results, leaveRequests: leaveRequests.results, expenses: expenses.results, report });
-  const filename = `${format}-${targetMonth}.xls`;
-  return new Response(workbook as unknown as BodyInit, { headers: { "Content-Type": "application/vnd.ms-excel; charset=utf-8", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`, "Cache-Control": "private, no-store" } });
+  const template = await attendanceTemplate(c, format);
+  if (!template) return error(c, 503, "出力テンプレートが未登録です。管理者がサンプルブックをテンプレートとして配置してください");
+  const generatedAt = new Date().toISOString();
+  const workbook = createAttendanceWorkbookFromTemplate(template.data, { format, month: targetMonth, generatedAt, displayName: user.displayName, profile: profileRow ?? { display_name: user.displayName }, entries: entries.results, leaveRequests: leaveRequests.results, expenses: expenses.results, report });
+  const filename = attendanceFilename(format, targetMonth, user.displayName);
+  return new Response(workbook as unknown as BodyInit, { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`, "Cache-Control": "private, no-store" } });
 });
