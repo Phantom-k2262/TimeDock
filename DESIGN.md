@@ -148,6 +148,12 @@ stateDiagram-v2
 - 差戻し理由は必須。差戻しで`rejected`となり再チェックアウト可能。
 - 承認した版番号を`approved_version`に保持。過去の版は削除しない。
 
+### 5.6 管理者の月次アーカイブ
+1. 管理者が対象月を選択し、月次アーカイブを作成する。
+2. APIが個人フォルダ配下の`勤務表ファイル`と`経費・領収証`の対象月ファイルを収集する。
+3. ZIP内は`個人名/勤務表ファイル/*`、`個人名/経費・領収証/*`の階層を保持する。
+4. ZIPは一時レスポンスとしてダウンロードし、元ファイルは削除・変更しない。監査ログに対象月・実行者・件数を記録する。
+
 ## 6. データモデル（D1 / SQLite）
 
 ### 方針
@@ -175,6 +181,8 @@ stateDiagram-v2
 `templates`: `id`, `folder_id`, `name`, `version`, `r2_key`, `sha256`, `size_bytes`, `created_by`, `created_at`, `active`。管理者のみテンプレート配布フォルダへ追加・更新できる。
 
 `timesheets`: `id`, `folder_id`, `user_id`, `target_month` ('YYYY-MM'), `template_id`, `status`, `current_version`, `current_r2_key`, `current_sha256`, `lock_id`, `lock_user_id`, `lock_token_hash`, `lock_base_version`, `lock_expires_at`, `lock_revoked_at`, `submitted_version`, `approved_version`, `created_at`, `updated_at`; UNIQUE(`user_id`, `target_month`)。1人1か月1勤務表のMVP仕様。
+
+`documents`: `id`, `folder_id`, `owner_user_id`, `name`, `category`, `target_month`, `r2_key`, `sha256`, `size_bytes`, `content_type`, `uploaded_by`, `created_at`, `deleted_at`。勤務表、経費、領収証など個人フォルダ内のファイルを保持する。
 
 `file_versions`: `id`, `timesheet_id`, `version` (INT), `r2_key`, `sha256`, `size_bytes`, `created_by`, `created_at`; UNIQUE(`timesheet_id`,`version`), UNIQUE(`r2_key`)。
 
@@ -216,6 +224,7 @@ stateDiagram-v2
 | POST | `/admin/timesheets/:id/revoke-lock` | `{ reason }` | revoked | Admin |
 | GET/POST | `/admin/users` | list/create invite | items | Admin |
 | GET/POST | `/admin/templates` | list/upload | items | GET: Login / POST: Admin |
+| GET | `/admin/archive/monthly?month=YYYY-MM` | ZIP attachment | Admin |
 
 ### Status codes / error contract
 - `400 VALIDATION_ERROR`
