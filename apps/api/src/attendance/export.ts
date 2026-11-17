@@ -81,16 +81,17 @@ function safeFilePart(value: string) {
   return value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_") || "未設定";
 }
 
-export function attendanceFilename(format: AttendanceExportFormat, targetMonth: string, displayName: string) {
+export function attendanceFilename(format: AttendanceExportFormat, targetMonth: string, displayName: string, templateName?: string) {
   const [year, month] = targetMonth.split("-").map(Number);
   const person = safeFilePart(displayName);
-  if (format === "aaaa_sp") return `【北國銀行次期コア】作業実績表（SP派遣用）${month}月_(${person}).xlsx`;
-  if (format === "abcs_regular") return `ABCS正社員（普通）勤務表${month}月(${person}).xlsx`;
+  const extension = templateName?.toLowerCase().endsWith(".xlsm") ? "xlsm" : "xlsx";
+  if (format === "aaaa_sp") return `【北國銀行次期コア】作業実績表（SP派遣用）${month}月_(${person}).${extension}`;
+  if (format === "abcs_regular") return `ABCS正社員（普通）勤務表${month}月(${person}).${extension}`;
   if (format === "leave_request") {
     const fiscalStart = month >= 4 ? year : year - 1;
-    return `休暇・遅刻・早退申請書(${fiscalStart}0401-${fiscalStart + 1}0331)_${person}.xlsx`;
+    return `休暇・遅刻・早退申請書(${fiscalStart}0401-${fiscalStart + 1}0331)_${person}.${extension}`;
   }
-  return `作業報告書・作業実績報告書(SP用)Ver2.2_${person}.xlsx`;
+  return `作業報告書・作業実績報告書(SP用)Ver2.2_${person}.${extension}`;
 }
 
 function xmlEscape(value: unknown) {
@@ -129,23 +130,9 @@ function timeNumber(value: unknown) {
   return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 100 + minutes : 0;
 }
 
-function removeMacros(entries: Record<string, Uint8Array>) {
-  for (const key of Object.keys(entries)) if (key.toLowerCase().includes("vbaproject.bin")) delete entries[key];
-  if (entries["[Content_Types].xml"]) {
-    let xml = strFromU8(entries["[Content_Types].xml"]);
-    xml = xml.replace(/<Override PartName="\/xl\/vbaProject\.bin"[^>]*\/>/g, "").replace(/application\/vnd\.ms-excel\.sheet\.macroEnabled\.main\+xml/g, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml");
-    entries["[Content_Types].xml"] = strToU8(xml);
-  }
-  for (const key of Object.keys(entries)) {
-    if (!key.endsWith(".rels")) continue;
-    const xml = strFromU8(entries[key]).replace(/<Relationship[^>]*Type="[^"]*vbaProject[^"]*"[^>]*\/>/g, "");
-    entries[key] = strToU8(xml);
-  }
-}
 
 export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input: TemplateInput) {
   const entries = unzipSync(template);
-  removeMacros(entries);
   const profile = input.profile;
   const name = input.displayName;
   const monthValue = excelSerial(`${input.month}-01`);

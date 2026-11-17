@@ -3,7 +3,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { attendanceFilename, createAttendanceWorkbookFromTemplate } from "../src/attendance/export";
 
 describe("attendance workbook export", () => {
-  it("preserves the template package, emits xlsx bytes, and uses the attached filename format", () => {
+  it("preserves the template package including macros and uses the attached filename format", () => {
     const template = zipSync({
       "[Content_Types].xml": strToU8("<Types><Override PartName=\"/xl/vbaProject.bin\" ContentType=\"application/vnd.ms-office.vbaProject\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.ms-excel.sheet.macroEnabled.main+xml\"/></Types>"),
       "xl/vbaProject.bin": new Uint8Array([1, 2, 3]),
@@ -23,10 +23,11 @@ describe("attendance workbook export", () => {
       displayName: "相澤友佑",
     }));
 
-    expect(workbook["xl/vbaProject.bin"]).toBeUndefined();
-    expect(strFromU8(workbook["[Content_Types].xml"])).toContain("spreadsheetml.sheet.main+xml");
+    expect(workbook["xl/vbaProject.bin"]).toEqual(new Uint8Array([1, 2, 3]));
+    expect(strFromU8(workbook["[Content_Types].xml"])).toContain("macroEnabled.main+xml");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("相澤友佑");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("s=\"11\"");
     expect(attendanceFilename("abcs_regular", "2026-11", "相澤友佑")).toBe("ABCS正社員（普通）勤務表11月(相澤友佑).xlsx");
+    expect(attendanceFilename("abcs_regular", "2026-11", "相澤友佑", "ABCS正社員（普通）勤務表.xlsm")).toBe("ABCS正社員（普通）勤務表11月(相澤友佑).xlsm");
   });
 });

@@ -154,6 +154,8 @@ attendanceRoutes.get("/export", async (c) => {
   if (!template) return error(c, 503, "出力テンプレートが未登録です。管理者がサンプルブックをテンプレートとして配置してください");
   const generatedAt = new Date().toISOString();
   const workbook = createAttendanceWorkbookFromTemplate(template.data, { format, month: targetMonth, generatedAt, displayName: user.displayName, profile: profileRow ?? { display_name: user.displayName }, entries: entries.results, leaveRequests: leaveRequests.results, expenses: expenses.results, report });
-  const filename = attendanceFilename(format, targetMonth, user.displayName);
-  return new Response(workbook as unknown as BodyInit, { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`, "Cache-Control": "private, no-store" } });
+  const isMacroEnabled = template.name.toLowerCase().endsWith(".xlsm");
+  const filename = attendanceFilename(format, targetMonth, user.displayName, template.name);
+  const contentType = isMacroEnabled ? "application/vnd.ms-excel.sheet.macroEnabled.12" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  return new Response(workbook as unknown as BodyInit, { headers: { "Content-Type": contentType, "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`, "Cache-Control": "private, no-store" } });
 });
