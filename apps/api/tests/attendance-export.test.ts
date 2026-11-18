@@ -17,7 +17,7 @@ describe("attendance workbook export", () => {
       month: "2026-11",
       generatedAt: "2026-11-17T06:00:00.000Z",
       profile: { display_name: "相澤友佑", employee_code: "553", company_name: "ABC" },
-      entries: [{ work_date: "2026-11-01", start_time: "09:00", end_time: "17:30", break_minutes: 75, ordinary_break_minutes: 60, night_break_minutes: 15, project_name: "案件A", note: "" }, { work_date: "2026-11-02", start_time: "09:00", end_time: "17:30", ordinary_break_minutes: "", night_break_minutes: "", project_name: "案件B", note: "" }],
+      entries: [{ work_date: "2026-11-01", start_time: "09:00", end_time: "17:30", break_minutes: 75, ordinary_break_minutes: 60, night_break_minutes: 15, project_name: "案件A", note: "" }, { work_date: "2026-11-02", start_time: "09:00", end_time: "17:30", ordinary_break_minutes: "", night_break_minutes: "", project_name: "案件B", note: "" }, { work_date: "2026-11-03", start_time: "09:00", end_time: "17:30", break_minutes: 30, ordinary_break_minutes: 0, night_break_minutes: 0, project_name: "案件C", note: "" }],
       leaveRequests: [],
       expenses: [],
       report: null,
@@ -34,6 +34,7 @@ describe("attendance workbook export", () => {
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("0.010416666666666666");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="E13" s="14"><v>0</v>');
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="E14" s="14"><v>0</v>');
+    expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="F13"><v>0.020833333333333332</v>');
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("既存データ");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).not.toContain("前回の残存データ");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="E9" s="13"');

@@ -44,7 +44,7 @@ attendanceRoutes.get("/month", async (c) => {
   if (!targetMonth) return error(c, 400, "対象年月はYYYY-MM形式で指定してください");
   const [profile, entries, leaveRequests, expenses, report, submission] = await Promise.all([
     c.env.DB.prepare("SELECT p.*, u.display_name FROM attendance_profiles p JOIN users u ON u.id = p.user_id WHERE p.user_id = ?1").bind(user.id).first<Record<string, unknown>>(),
-    c.env.DB.prepare("SELECT id, work_date, start_time, end_time, break_minutes, ordinary_break_minutes, night_break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
+    c.env.DB.prepare("SELECT id, work_date, start_time, end_time, break_minutes, CASE WHEN ordinary_break_minutes = 0 AND night_break_minutes = 0 AND break_minutes > 0 THEN break_minutes ELSE ordinary_break_minutes END AS ordinary_break_minutes, night_break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT id, start_date, end_date, leave_type, reason, status FROM leave_requests WHERE user_id = ?1 AND target_month = ?2 ORDER BY start_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT id, expense_date, category, amount, description FROM expense_items WHERE user_id = ?1 AND target_month = ?2 ORDER BY expense_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT id, summary, achievements, next_steps FROM monthly_reports WHERE user_id = ?1 AND target_month = ?2").bind(user.id, targetMonth).first<Record<string, unknown>>(),
@@ -148,7 +148,7 @@ attendanceRoutes.get("/export", async (c) => {
   const format = parsedFormat?.success ? parsedFormat.data : user.exportFormat ?? "abcs_regular";
   const [profileRow, entries, leaveRequests, expenses, report] = await Promise.all([
     c.env.DB.prepare("SELECT p.*, u.display_name FROM attendance_profiles p JOIN users u ON u.id = p.user_id WHERE p.user_id = ?1").bind(user.id).first<Record<string, unknown>>(),
-    c.env.DB.prepare("SELECT work_date, start_time, end_time, break_minutes, ordinary_break_minutes, night_break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
+    c.env.DB.prepare("SELECT work_date, start_time, end_time, break_minutes, CASE WHEN ordinary_break_minutes = 0 AND night_break_minutes = 0 AND break_minutes > 0 THEN break_minutes ELSE ordinary_break_minutes END AS ordinary_break_minutes, night_break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT start_date, end_date, leave_type, reason, status FROM leave_requests WHERE user_id = ?1 AND target_month = ?2 ORDER BY start_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT expense_date, category, amount, description FROM expense_items WHERE user_id = ?1 AND target_month = ?2 ORDER BY expense_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT summary, achievements, next_steps FROM monthly_reports WHERE user_id = ?1 AND target_month = ?2").bind(user.id, targetMonth).first<Record<string, unknown>>(),
