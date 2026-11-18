@@ -44,7 +44,7 @@ attendanceRoutes.get("/month", async (c) => {
   if (!targetMonth) return error(c, 400, "対象年月はYYYY-MM形式で指定してください");
   const [profile, entries, leaveRequests, expenses, report, submission] = await Promise.all([
     c.env.DB.prepare("SELECT p.*, u.display_name FROM attendance_profiles p JOIN users u ON u.id = p.user_id WHERE p.user_id = ?1").bind(user.id).first<Record<string, unknown>>(),
-    c.env.DB.prepare("SELECT id, work_date, start_time, end_time, break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
+    c.env.DB.prepare("SELECT id, work_date, start_time, end_time, break_minutes, ordinary_break_minutes, night_break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT id, start_date, end_date, leave_type, reason, status FROM leave_requests WHERE user_id = ?1 AND target_month = ?2 ORDER BY start_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT id, expense_date, category, amount, description FROM expense_items WHERE user_id = ?1 AND target_month = ?2 ORDER BY expense_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT id, summary, achievements, next_steps FROM monthly_reports WHERE user_id = ?1 AND target_month = ?2").bind(user.id, targetMonth).first<Record<string, unknown>>(),
@@ -72,11 +72,14 @@ attendanceRoutes.post("/entries", async (c) => {
   if (!targetMonth || typeof body?.workDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body.workDate)) return error(c, 400, "勤務日と対象年月を確認してください");
   if (body.startTime !== undefined && body.startTime !== null && typeof body.startTime !== "string") return error(c, 400, "開始時刻を確認してください");
   if (body.endTime !== undefined && body.endTime !== null && typeof body.endTime !== "string") return error(c, 400, "終了時刻を確認してください");
-  const breakMinutes = Number(body.breakMinutes ?? 0);
-  if (!Number.isInteger(breakMinutes) || breakMinutes < 0 || breakMinutes > 1440) return error(c, 400, "休憩時間を確認してください");
+  const legacyBreakMinutes = Number(body.breakMinutes ?? 0);
+  const ordinaryBreakMinutes = Number(body.ordinaryBreakMinutes ?? legacyBreakMinutes);
+  const nightBreakMinutes = Number(body.nightBreakMinutes ?? 0);
+  const breakMinutes = ordinaryBreakMinutes + nightBreakMinutes;
+  if (![ordinaryBreakMinutes, nightBreakMinutes].every((value) => Number.isInteger(value) && value >= 0 && value <= 1440) || breakMinutes > 1440) return error(c, 400, "普通休憩・深夜休憩の合計時間を確認してください");
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
-  await c.env.DB.prepare("INSERT INTO attendance_entries (id, user_id, target_month, work_date, start_time, end_time, break_minutes, project_name, note, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10) ON CONFLICT(user_id, work_date) DO UPDATE SET target_month = excluded.target_month, start_time = excluded.start_time, end_time = excluded.end_time, break_minutes = excluded.break_minutes, project_name = excluded.project_name, note = excluded.note, updated_at = excluded.updated_at").bind(id, user.id, targetMonth, body.workDate, body.startTime ?? null, body.endTime ?? null, breakMinutes, body.projectName ?? null, body.note ?? null, now).run();
+  await c.env.DB.prepare("INSERT INTO attendance_entries (id, user_id, target_month, work_date, start_time, end_time, break_minutes, ordinary_break_minutes, night_break_minutes, project_name, note, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) ON CONFLICT(user_id, work_date) DO UPDATE SET target_month = excluded.target_month, start_time = excluded.start_time, end_time = excluded.end_time, break_minutes = excluded.break_minutes, ordinary_break_minutes = excluded.ordinary_break_minutes, night_break_minutes = excluded.night_break_minutes, project_name = excluded.project_name, note = excluded.note, updated_at = excluded.updated_at").bind(id, user.id, targetMonth, body.workDate, body.startTime ?? null, body.endTime ?? null, breakMinutes, ordinaryBreakMinutes, nightBreakMinutes, body.projectName ?? null, body.note ?? null, now).run();
   return c.json({ ok: true }, 201);
 });
 
@@ -145,7 +148,7 @@ attendanceRoutes.get("/export", async (c) => {
   const format = parsedFormat?.success ? parsedFormat.data : user.exportFormat ?? "abcs_regular";
   const [profileRow, entries, leaveRequests, expenses, report] = await Promise.all([
     c.env.DB.prepare("SELECT p.*, u.display_name FROM attendance_profiles p JOIN users u ON u.id = p.user_id WHERE p.user_id = ?1").bind(user.id).first<Record<string, unknown>>(),
-    c.env.DB.prepare("SELECT work_date, start_time, end_time, break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
+    c.env.DB.prepare("SELECT work_date, start_time, end_time, break_minutes, ordinary_break_minutes, night_break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT start_date, end_date, leave_type, reason, status FROM leave_requests WHERE user_id = ?1 AND target_month = ?2 ORDER BY start_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT expense_date, category, amount, description FROM expense_items WHERE user_id = ?1 AND target_month = ?2 ORDER BY expense_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT summary, achievements, next_steps FROM monthly_reports WHERE user_id = ?1 AND target_month = ?2").bind(user.id, targetMonth).first<Record<string, unknown>>(),

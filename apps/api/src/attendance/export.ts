@@ -215,6 +215,11 @@ function timeNumber(value: unknown) {
   return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 100 + minutes : 0;
 }
 
+function minutesAsExcelTime(value: unknown) {
+  const minutes = Number(value ?? 0);
+  return Number.isFinite(minutes) && minutes >= 0 ? minutes / 1440 : 0;
+}
+
 
 export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input: TemplateInput) {
   const entries = unzipSync(template);
@@ -247,7 +252,9 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       if (!Number.isInteger(day) || day < 1 || day > 31) return;
       const column = excelColumn(3 + day);
       const workCode = typeof entry.work_code === "string" && entry.work_code ? entry.work_code : "D";
-      xml = patchCells(xml, [[`${column}9`, workCode], [`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true], [`${column}13`, entry.project_name ?? ""]]);
+      const ordinaryBreak = entry.ordinary_break_minutes ?? entry.break_minutes ?? 0;
+      const nightBreak = entry.night_break_minutes ?? 0;
+      xml = patchCells(xml, [[`${column}9`, workCode], [`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true], [`${column}13`, minutesAsExcelTime(ordinaryBreak), true], [`${column}14`, minutesAsExcelTime(nightBreak), true]]);
     });
     entries[path] = strToU8(xml);
   }

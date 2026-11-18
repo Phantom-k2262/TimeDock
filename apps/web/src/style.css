@@ -149,7 +149,7 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 .attendance-entry-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .75rem; align-items: end; }
 .attendance-entry-form button { min-height: 2.7rem; }
 .attendance-table { display: grid; overflow-x: auto; border: 1px solid #e5e9f0; border-radius: .5rem; }
-.attendance-table-head, .attendance-table-row { display: grid; grid-template-columns: 1fr 1.5fr .8fr 1.4fr; gap: .75rem; min-width: 600px; padding: .75rem; }
+.attendance-table-head, .attendance-table-row { display: grid; grid-template-columns: 1fr 1.5fr .8fr .8fr 1.4fr; gap: .75rem; min-width: 700px; padding: .75rem; }
 .attendance-table-head { color: #8490a3; background: #fafbfc; font-size: .8rem; font-weight: 700; }
 .attendance-table-row { border-top: 1px solid #eef0f4; color: #526079; }
 .attendance-list-row { display: grid; grid-template-columns: 1.2fr 1fr 2fr; gap: .75rem; padding: .75rem 0; border-top: 1px solid #eef0f4; color: #526079; }
