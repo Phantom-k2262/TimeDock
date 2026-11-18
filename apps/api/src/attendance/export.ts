@@ -1,5 +1,6 @@
 import type { AttendanceExportFormat } from "@timesheet/shared";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { inspectWorkbook, validateWorkbookIntegrity } from "../excel/workbook";
 
 type Cell = string | number | null | undefined;
 type Sheet = { name: string; headers: string[]; rows: Cell[][] };
@@ -286,7 +287,10 @@ function minutesAsExcelTime(value: unknown) {
 
 
 export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input: TemplateInput) {
+  const originalEntries = unzipSync(template);
   const entries = unzipSync(template);
+  const originalInspection = inspectWorkbook(originalEntries);
+  if (!originalInspection.sheets.length) throw new Error("テンプレートにワークシートがありません");
   const profile = input.profile;
   const name = input.displayName;
   const monthValue = excelSerial(`${input.month}-01`);
@@ -299,14 +303,17 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   const projectName = profile.project_name ?? "";
   const clientName = profile.client_name ?? "";
 
+  const changedPaths = new Set<string>(["xl/workbook.xml", "xl/calcChain.xml"]);
   if (input.format === "aaaa_sp") {
     const path = worksheetPath(entries, ["作業実績表(ABC用)"]);
     if (!path) throw new Error("テンプレートに作業実績表(ABC用)シートがありません");
+    changedPaths.add(path);
     entries[path] = strToU8(patchCells(strFromU8(entries[path]), [["C3", monthValue, true], ["E6", companyName], ["E7", name], ["E8", projectName], ["E9", clientName]]));
   }
   if (input.format === "abcs_regular") {
     const path = worksheetPath(entries, ["勤務表（入力用）"]);
     if (!path) throw new Error("テンプレートに勤務表（入力用）シートがありません");
+    changedPaths.add(path);
     // The macro requires the month and employee identity before it resets the
     // day-entry area.  Keep this order: identity -> macro-equivalent reset -> data.
     let xml = patchCells(strFromU8(entries[path]), [["A5", monthValue, true], ["B5", employeeCode], ["C5", nameKana], ["D5", name], ["K5", divisionName], ["P5", departmentName]]);
@@ -335,6 +342,7 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       submissionXml = patchCells(submissionXml, [[`M${15 + day}`, entry.note ?? ""]]);
     });
     if (submissionPath && submissionXml) {
+      changedPaths.add(submissionPath);
       submissionXml = clearFormulaCaches(submissionXml, (_reference, formula) => /勤務表（入力用）'?!\$?[A-Z]+\$?(15|18|19|20|21|22|23)\b/.test(decodeXml(formula)));
       submissionXml = refreshSubmissionReferenceCaches(submissionXml, xml);
       entries[submissionPath] = strToU8(submissionXml);
@@ -343,6 +351,7 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   if (input.format === "leave_request") {
     const path = worksheetPath(entries, ["1ﾍﾟｰｼﾞ~5ﾍﾟｰｼﾞ"]);
     if (!path) throw new Error("テンプレートに休暇申請シートがありません");
+    changedPaths.add(path);
     entries[path] = strToU8(patchCells(strFromU8(entries[path]), [["C2", employeeCode], ["E2", departmentName], ["H2", name]]));
     input.leaveRequests.slice(0, 40).forEach((request, index) => {
       const rowNumber = 9 + index * 2;
@@ -352,6 +361,7 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   if (input.format === "sp_report") {
     const path = worksheetPath(entries, ["作業実績表(ABC用)"]);
     if (!path) throw new Error("テンプレートに作業実績表(ABC用)シートがありません");
+    changedPaths.add(path);
     let xml = patchCells(strFromU8(entries[path]), [["H1", generatedValue, true], ["E5", companyName], ["E6", name], ["A9", monthValue, true], ["C9", name], ["E9", projectName || clientName]]);
     input.entries.slice(0, 31).forEach((entry, index) => {
       const rowNumber = 13 + index;
@@ -363,5 +373,10 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   // VBA and Excel's calculation engine cannot run inside Workers. Preserve the
   // formulas and finalize the workbook for a full recalculation on open.
   finalizeWorkbookBeforeOutput(entries);
+  const integrity = validateWorkbookIntegrity(originalEntries, entries, [...changedPaths]);
+  if (!integrity.ok) {
+    const detail = integrity.issues.map((issue) => `${issue.kind}:${issue.path}`).join(", ");
+    throw new Error(`テンプレート保全検証に失敗しました: ${detail}`);
+  }
   return zipSync(entries, { level: 6 });
 }
