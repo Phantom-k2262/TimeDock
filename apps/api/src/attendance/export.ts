@@ -241,7 +241,8 @@ function refreshSubmissionReferenceCaches(xml: string, inputXml: string) {
     const empty = value.value === "" || (source[2] === "<>0" || source[2] === "=0") && Number(value.value) === 0;
     const result = empty ? "" : value.value;
     const cached = `<v>${escapeXml(result)}</v>`;
-    if (/<v\b[^>]*>[\s\S]*?<\/v\s*>/.test(content)) return `<c${attributes}>${content.replace(/<v\b[^>]*>[\s\S]*?<\/v\s*>/, cached)}</c>`;
+    const cachePattern = /<v\b[^>]*(?:\/>|>[\s\S]*?<\/v\s*>)/;
+    if (cachePattern.test(content)) return `<c${attributes}>${content.replace(cachePattern, cached)}</c>`;
     return `<c${attributes}>${content}</c>`.replace(/<\/c>$/, `${cached}</c>`);
   });
 }
