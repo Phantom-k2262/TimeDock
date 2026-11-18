@@ -272,6 +272,10 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       xml = patchCells(xml, [[`${column}9`, workCode], [`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true], [`${column}13`, minutesAsExcelTime(ordinaryBreak), true], [`${column}14`, minutesAsExcelTime(nightBreak), true]]);
     });
     entries[path] = strToU8(xml);
+    const submissionPath = worksheetPath(entries, ["勤務表（会社提出用）"]);
+    if (submissionPath) {
+      entries[submissionPath] = strToU8(clearCells(strFromU8(entries[submissionPath]), expandCellRange(13, 13, 16, 46)));
+    }
   }
   if (input.format === "leave_request") {
     const path = worksheetPath(entries, ["1ﾍﾟｰｼﾞ~5ﾍﾟｰｼﾞ"]);
