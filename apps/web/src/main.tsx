@@ -50,7 +50,7 @@ function AttendancePage() {
   const [report, setReport] = useState({ summary: "", achievements: "", nextSteps: "" });
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [entry, setEntry] = useState({ workDate: `${defaultMonth}-01`, startTime: "09:00", endTime: "17:30", ordinaryBreakMinutes: "60", nightBreakMinutes: "0", projectName: "", note: "" });
+  const [entry, setEntry] = useState({ workDate: `${defaultMonth}-01`, startTime: "09:00", endTime: "17:30", ordinaryBreakMinutes: "", nightBreakMinutes: "", projectName: "", note: "" });
   const [leave, setLeave] = useState({ startDate: `${defaultMonth}-01`, endDate: `${defaultMonth}-01`, leaveType: "年休", reason: "" });
   const [expense, setExpense] = useState({ expenseDate: `${defaultMonth}-01`, category: "交通費", amount: "", description: "" });
   const elevated = user?.role === "system_admin" || user?.role === "system_operator" || user?.role === "verifier";
