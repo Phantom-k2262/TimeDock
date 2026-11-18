@@ -140,9 +140,11 @@ function clearCells(xml: string, references: string[]) {
     if (!targets.has(reference)) return cell;
     const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
     // Initialization clears user-entered constants, but never removes a
-    // template formula. Formula caches are removed so Excel recalculates them.
+    // template formula or its cached display value. Excel will recalculate it
+    // on open; retaining the cache prevents the sheet from appearing blank.
     const preservedFormula = content.match(/<f\b[\s\S]*?<\/f\s*>/)?.[0] ?? "";
-    return `<c${withoutType}>${preservedFormula}</c>`;
+    const preservedCache = content.match(/<v\b[^>]*>[\s\S]*?<\/v\s*>/)?.[0] ?? "";
+    return `<c${withoutType}>${preservedFormula}${preservedCache}</c>`;
   });
 }
 
@@ -197,23 +199,59 @@ function requestFormulaRecalculation(entries: Record<string, Uint8Array>) {
   delete entries["xl/calcChain.xml"];
 }
 
-function invalidateFormulaCaches(entries: Record<string, Uint8Array>) {
-  for (const path of Object.keys(entries)) {
-    if (!/^xl\/worksheets\/[^/]+\.xml$/.test(path)) continue;
-    const xml = strFromU8(entries[path]);
-    entries[path] = strToU8(xml.replace(/<c\b(?![^>]*\/>)([^>]*)>([\s\S]*?)<\/c>/g, (cell, attributes, content) => {
-      if (!/<f\b/.test(content)) return cell;
-      return `<c${attributes}>${content.replace(/<v\b[^>]*>[\s\S]*?<\/v\s*>/g, "")}</c>`;
-    }));
+function decodeXml(value: string) {
+  return value.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+}
+
+function worksheetValues(xml: string) {
+  const values = new Map<string, { value: string; numeric: boolean }>();
+  for (const match of xml.matchAll(/<c\b([^>]*\br=["']([^"']+)["'][^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+    const attributes = match[1];
+    const content = match[3] ?? "";
+    if (/<f\b/.test(content)) {
+      const cached = content.match(/<v\b[^>]*>([\s\S]*?)<\/v\s*>/)?.[1];
+      if (cached !== undefined) values.set(match[2], { value: decodeXml(cached), numeric: !/\bt=["'](?:str|inlineStr)["']/.test(attributes) });
+      continue;
+    }
+    const inline = content.match(/<t\b[^>]*>([\s\S]*?)<\/t\s*>/)?.[1];
+    const numeric = content.match(/<v\b[^>]*>([\s\S]*?)<\/v\s*>/)?.[1];
+    if (inline !== undefined) values.set(match[2], { value: decodeXml(inline), numeric: false });
+    else if (numeric !== undefined) values.set(match[2], { value: decodeXml(numeric), numeric: true });
   }
+  return values;
+}
+
+/**
+ * Refresh the cached result for the simple cross-sheet formulas used by the
+ * submission sheet. Excel/VBA itself cannot run in Workers, so custom VBA
+ * functions remain delegated to Excel; however, direct references must still
+ * show the values entered through the web UI before the workbook is opened.
+ */
+function refreshSubmissionReferenceCaches(xml: string, inputXml: string) {
+  const sourceValues = worksheetValues(inputXml);
+  return xml.replace(/<c\b([^>]*\br=["']([^"']+)["'][^>]*?)>([\s\S]*?)<\/c>/g, (cell, attributes, _reference, content) => {
+    const formula = content.match(/<f\b[^>]*>([\s\S]*?)<\/f\s*>/)?.[1];
+    if (!formula) return cell;
+    const normalized = decodeXml(formula).trim();
+    const source = normalized.match(/^IF\(\s*'?勤務表（入力用）'?!(\$?[A-Z]+\$?\d+)\s*(<>0|=0|="")\s*,\s*""\s*,\s*'?勤務表（入力用）'?!\$?([A-Z]+)\$?(\d+)\s*\)$/i);
+    if (!source) return cell;
+    const sourceReference = source[1].replace(/\$/g, "");
+    const value = sourceValues.get(sourceReference);
+    if (!value) return cell;
+    const empty = value.value === "" || (source[2] === "<>0" || source[2] === "=0") && Number(value.value) === 0;
+    const result = empty ? "" : value.value;
+    const cached = `<v>${escapeXml(result)}</v>`;
+    if (/<v\b[^>]*>[\s\S]*?<\/v\s*>/.test(content)) return `<c${attributes}>${content.replace(/<v\b[^>]*>[\s\S]*?<\/v\s*>/, cached)}</c>`;
+    return `<c${attributes}>${content}</c>`.replace(/<\/c>$/, `${cached}</c>`);
+  });
 }
 
 function finalizeWorkbookBeforeOutput(entries: Record<string, Uint8Array>) {
   // This is intentionally the last workbook mutation before ZIP creation.
-  // Workers cannot execute Excel's calculation engine, so the copied workbook
-  // is marked for automatic full recalculation when opened by Excel. Remove
-  // cached formula results so stale values cannot be mistaken for new data.
-  invalidateFormulaCaches(entries);
+  // Workers cannot execute Excel's calculation engine or VBA. Keep the
+  // template's cached values (removing them makes the workbook appear blank),
+  // refresh direct input-sheet references, and ask Excel to recalculate all
+  // formulas when the workbook is opened.
   requestFormulaRecalculation(entries);
 }
 
@@ -281,7 +319,10 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       if (!submissionXml || !Number.isInteger(day) || day < 1 || day > 31) return;
       submissionXml = patchCells(submissionXml, [[`M${15 + day}`, entry.note ?? ""]]);
     });
-    if (submissionPath && submissionXml) entries[submissionPath] = strToU8(submissionXml);
+    if (submissionPath && submissionXml) {
+      submissionXml = refreshSubmissionReferenceCaches(submissionXml, xml);
+      entries[submissionPath] = strToU8(submissionXml);
+    }
   }
   if (input.format === "leave_request") {
     const path = worksheetPath(entries, ["1ﾍﾟｰｼﾞ~5ﾍﾟｰｼﾞ"]);
