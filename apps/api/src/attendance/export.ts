@@ -142,8 +142,8 @@ function clearCells(xml: string, references: string[]) {
     // Initialization clears user-entered constants, but never removes a
     // template formula or its cached display value. Excel will recalculate it
     // on open; retaining the cache prevents the sheet from appearing blank.
-    const preservedFormula = content.match(/<f\b[\s\S]*?<\/f\s*>/)?.[0] ?? "";
-    const preservedCache = content.match(/<v\b[^>]*>[\s\S]*?<\/v\s*>/)?.[0] ?? "";
+    const preservedFormula = content.match(/<f\b[^>]*(?:\/>|>[\s\S]*?<\/f\s*>)/)?.[0] ?? "";
+    const preservedCache = preservedFormula ? content.match(/<v\b[^>]*>[\s\S]*?<\/v\s*>/)?.[0] ?? "" : "";
     return `<c${withoutType}>${preservedFormula}${preservedCache}</c>`;
   });
 }
@@ -219,6 +219,16 @@ function worksheetValues(xml: string) {
     else if (numeric !== undefined) values.set(match[2], { value: decodeXml(numeric), numeric: true });
   }
   return values;
+}
+
+function clearFormulaCaches(xml: string, shouldClear: (reference: string, formula: string) => boolean) {
+  return xml.replace(/<c\b([^>]*\br=["']([^"']+)["'][^>]*?)>([\s\S]*?)<\/c>/g, (cell, attributes, reference, content) => {
+    const formula = content.match(/<f\b[^>]*(?:\/>|>([\s\S]*?)<\/f\s*>)/);
+    if (!formula || !shouldClear(reference, formula[1] ?? "")) return cell;
+    const cachePattern = /<v\b[^>]*(?:\/>|>[\s\S]*?<\/v\s*>)/;
+    const nextContent = cachePattern.test(content) ? content.replace(cachePattern, "<v/>") : `${content}<v/>`;
+    return `<c${attributes}>${nextContent}</c>`;
+  });
 }
 
 /**
@@ -310,6 +320,10 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       const nightBreak = entry.night_break_minutes ?? 0;
       xml = patchCells(xml, [[`${column}9`, workCode], [`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true], [`${column}13`, minutesAsExcelTime(ordinaryBreak), true], [`${column}14`, minutesAsExcelTime(nightBreak), true]]);
     });
+    // The template contains cached results for the sample data. Clear only
+    // calculated attendance rows so those results cannot leak into an empty
+    // export; formulas themselves remain intact for Excel to recalculate.
+    xml = clearFormulaCaches(xml, (reference) => [15, 18, 19, 20, 21, 22, 23].includes(Number(reference.match(/\d+$/)?.[0])));
     entries[path] = strToU8(xml);
     const submissionPath = worksheetPath(entries, ["勤務表（会社提出用）"]);
     let submissionXml = submissionPath
@@ -321,6 +335,7 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       submissionXml = patchCells(submissionXml, [[`M${15 + day}`, entry.note ?? ""]]);
     });
     if (submissionPath && submissionXml) {
+      submissionXml = clearFormulaCaches(submissionXml, (_reference, formula) => /勤務表（入力用）'?!\$?[A-Z]+\$?(15|18|19|20|21|22|23)\b/.test(decodeXml(formula)));
       submissionXml = refreshSubmissionReferenceCaches(submissionXml, xml);
       entries[submissionPath] = strToU8(submissionXml);
     }
