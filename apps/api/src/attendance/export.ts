@@ -98,24 +98,32 @@ function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
   const cellContent = (value: unknown, numeric?: boolean) => numeric
     ? `<v>${escapeXml(value as Cell)}</v>`
     : `<is><t xml:space="preserve">${escapeXml(value as Cell)}</t></is>`;
+  const updates = new Map(values.map(([reference, value, numeric]) => [reference, { value, numeric }]));
+  const found = new Set<string>();
+  const cellPattern = /<c\b([^>]*\br=["']([^"']+)["'][^>]*)>([\s\S]*?)<\/c>|<c\b([^>]*\br=["']([^"']+)["'][^>]*)\s*\/>/g;
+  xml = xml.replace(cellPattern, (cell, attributes, reference, _content, selfClosingAttributes, selfClosingReference) => {
+    const ref = reference ?? selfClosingReference;
+    const update = updates.get(ref);
+    if (!update) return cell;
+    found.add(ref);
+    const originalAttributes = attributes ?? selfClosingAttributes;
+    const withoutType = originalAttributes.replace(/\s+t=["'][^"']*["']/g, "");
+    return `<c${update.numeric ? withoutType : `${withoutType} t="inlineStr"`}>${cellContent(update.value, update.numeric)}</c>`;
+  });
 
-  for (const [reference, value, numeric] of values) {
-    const cellPattern = new RegExp(`<c\\b([^>]*\\br=["']${reference}["'][^>]*)>([\\s\\S]*?)</c>|<c\\b([^>]*\\br=["']${reference}["'][^>]*)\\s*/>`);
-    const match = xml.match(cellPattern);
-    if (match) {
-      const attributes = match[1] ?? match[3];
-      const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
-      const replacement = `<c${numeric ? withoutType : `${withoutType} t="inlineStr"`}>${cellContent(value, numeric)}</c>`;
-      xml = xml.replace(cellPattern, replacement);
-      continue;
-    }
-
+  const missingByRow = new Map<string, string[]>();
+  for (const [reference, update] of updates) {
+    if (found.has(reference)) continue;
     const rowNumber = reference.match(/\d+$/)?.[0];
     if (!rowNumber) continue;
-    const rowPattern = new RegExp(`(<row\\b[^>]*\\br=["']${rowNumber}["'][^>]*>)([\\s\\S]*?)(</row>)`);
-    if (rowPattern.test(xml)) xml = xml.replace(rowPattern, `$1$2<c r="${reference}"${numeric ? "" : " t=\"inlineStr\""}>${cellContent(value, numeric)}</c>$3`);
+    const cell = `<c r="${reference}"${update.numeric ? "" : " t=\"inlineStr\""}>${cellContent(update.value, update.numeric)}</c>`;
+    missingByRow.set(rowNumber, [...(missingByRow.get(rowNumber) ?? []), cell]);
   }
-  return xml;
+  if (missingByRow.size === 0) return xml;
+  return xml.replace(/<row\b([^>]*\br=["'](\d+)["'][^>]*)>([\s\S]*?)<\/row>/g, (row, attributes, rowNumber, content) => {
+    const missing = missingByRow.get(rowNumber);
+    return missing ? `<row${attributes}>${content}${missing.join("")}</row>` : row;
+  });
 }
 
 /**
@@ -125,19 +133,15 @@ function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
  * input ranges remain untouched.
  */
 function clearCells(xml: string, references: string[]) {
-  for (const reference of references) {
-    const cellPattern = new RegExp(`<c\\b([^>]*\\br=["']${reference}["'][^>]*)>([\\s\\S]*?)</c>`);
-    const match = xml.match(cellPattern);
-    if (!match) continue;
-    const attributes = match[1];
-    const content = match[2];
+  const targets = new Set(references);
+  return xml.replace(/<c\b([^>]*\br=["']([^"']+)["'][^>]*)>([\s\S]*?)<\/c>/g, (cell, attributes, reference, content) => {
+    if (!targets.has(reference)) return cell;
     const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
     // Initialization clears user-entered constants, but never removes a
     // template formula. Formula caches are removed so Excel recalculates them.
     const preservedFormula = content.match(/<f\b[\s\S]*?<\/f\s*>/)?.[0] ?? "";
-    xml = xml.replace(cellPattern, `<c${withoutType}>${preservedFormula}</c>`);
-  }
-  return xml;
+    return `<c${withoutType}>${preservedFormula}</c>`;
+  });
 }
 
 function expandCellRange(startColumn: number, endColumn: number, startRow: number, endRow: number) {
