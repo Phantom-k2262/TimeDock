@@ -132,6 +132,45 @@ function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
   return new XMLSerializer().serializeToString(document);
 }
 
+/**
+ * Reproduces the input-sheet reset performed by the ABCS workbook's
+ * initialization macro.  Only cell contents are removed; cell styles,
+ * merged ranges, validation, row layout and formulas outside the macro's
+ * input ranges remain untouched.
+ */
+function clearCells(xml: string, references: string[]) {
+  const document = parseXml(xml);
+  const cells = document.getElementsByTagName("c");
+  for (const reference of references) {
+    const cell = Array.from(cells).find((candidate) => candidate.getAttribute("r") === reference);
+    if (!cell) continue;
+    cell.removeAttribute("t");
+    for (const child of Array.from(cell.childNodes)) {
+      if (child.nodeName === "f" || child.nodeName === "v" || child.nodeName === "is") cell.removeChild(child);
+    }
+  }
+  return new XMLSerializer().serializeToString(document);
+}
+
+function expandCellRange(startColumn: number, endColumn: number, startRow: number, endRow: number) {
+  const references: string[] = [];
+  for (let row = startRow; row <= endRow; row += 1) {
+    for (let column = startColumn; column <= endColumn; column += 1) references.push(`${excelColumn(column)}${row}`);
+  }
+  return references;
+}
+
+function initializeAbcsInputSheet(xml: string) {
+  // The VBA macro clears these user-entry ranges after identity/month are set.
+  // Run this before applying attendance entries so stale sample data can never
+  // leak into a generated submission.
+  return clearCells(xml, [
+    ...expandCellRange(4, 34, 9, 10),
+    ...expandCellRange(4, 34, 12, 14),
+    ...expandCellRange(4, 34, 26, 55),
+  ]);
+}
+
 function worksheetPath(entries: Record<string, Uint8Array>, names: string[]) {
   const workbook = strFromU8(entries["xl/workbook.xml"] ?? new Uint8Array());
   const relationships = strFromU8(entries["xl/_rels/workbook.xml.rels"] ?? new Uint8Array());
@@ -199,7 +238,10 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   if (input.format === "abcs_regular") {
     const path = worksheetPath(entries, ["勤務表（入力用）"]);
     if (!path) throw new Error("テンプレートに勤務表（入力用）シートがありません");
+    // The macro requires the month and employee identity before it resets the
+    // day-entry area.  Keep this order: identity -> macro-equivalent reset -> data.
     let xml = patchCells(strFromU8(entries[path]), [["A5", monthValue, true], ["B5", employeeCode], ["C5", nameKana], ["D5", name], ["K5", divisionName], ["P5", departmentName]]);
+    xml = initializeAbcsInputSheet(xml);
     input.entries.forEach((entry) => {
       const day = Number(String(entry.work_date ?? "").slice(-2));
       if (!Number.isInteger(day) || day < 1 || day > 31) return;
