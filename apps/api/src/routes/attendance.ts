@@ -160,5 +160,5 @@ attendanceRoutes.get("/export", async (c) => {
   const isMacroEnabled = template.name.toLowerCase().endsWith(".xlsm");
   const filename = attendanceFilename(format, targetMonth, user.displayName, template.name);
   const contentType = isMacroEnabled ? "application/vnd.ms-excel.sheet.macroEnabled.12" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  return new Response(workbook as unknown as BodyInit, { headers: { "Content-Type": contentType, "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`, "Cache-Control": "private, no-store", "X-TimeDock-Formula-Evaluation": "deferred-to-excel", "X-TimeDock-VBA": isMacroEnabled ? "preserved-not-executed" : "not-present" } });
+  return new Response(workbook as unknown as BodyInit, { headers: { "Content-Type": contentType, "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`, "Cache-Control": "private, no-store", "X-TimeDock-Formula-Evaluation": "typescript-cache;vba-udf-deferred", "X-TimeDock-VBA": isMacroEnabled ? "preserved-not-executed" : "not-present" } });
 });
