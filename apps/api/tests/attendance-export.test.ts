@@ -19,7 +19,7 @@ describe("attendance workbook export", () => {
       month: "2026-11",
       generatedAt: "2026-11-17T06:00:00.000Z",
       profile: { display_name: "相澤友佑", employee_code: "553", company_name: "ABC" },
-      entries: [{ work_date: "2026-11-01", start_time: "09:00", end_time: "17:30", break_minutes: 75, ordinary_break_minutes: 60, night_break_minutes: 15, project_name: "案件A", note: "" }, { work_date: "2026-11-02", start_time: "09:00", end_time: "17:30", ordinary_break_minutes: "", night_break_minutes: "", project_name: "案件B", note: "" }, { work_date: "2026-11-03", start_time: "09:00", end_time: "17:30", break_minutes: 30, ordinary_break_minutes: 0, night_break_minutes: 0, project_name: "案件C", note: "" }],
+      entries: [{ work_date: "2026-11-01", start_time: "09:00", end_time: "17:30", break_minutes: 75, ordinary_break_minutes: 60, night_break_minutes: 15, project_name: "案件A", note: "初回提出" }, { work_date: "2026-11-02", start_time: "09:00", end_time: "17:30", ordinary_break_minutes: "", night_break_minutes: "", project_name: "案件B", note: "" }, { work_date: "2026-11-03", start_time: "09:00", end_time: "17:30", break_minutes: 30, ordinary_break_minutes: 0, night_break_minutes: 0, project_name: "案件C", note: "" }],
       leaveRequests: [],
       expenses: [],
       report: null,
@@ -48,9 +48,9 @@ describe("attendance workbook export", () => {
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('<c r="AA9" s="13"/>');
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).not.toContain("/></c>");
     expect(new DOMParser().parseFromString(strFromU8(workbook["xl/worksheets/sheet3.xml"]), "application/xml").getElementsByTagName("parsererror").length).toBe(0);
-    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).not.toContain("提出用の既存文字");
+    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="M16" s="21" t="inlineStr"><is><t xml:space="preserve">初回提出</t></is></c>');
     expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).not.toContain("末尾文字");
-    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="M18" s="22"><f>SUM(M16)</f>');
+    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="M18" s="22" t="inlineStr"><is><t xml:space="preserve"></t></is></c>');
     expect(attendanceFilename("abcs_regular", "2026-11", "相澤友佑")).toBe("ABCS正社員（普通）勤務表11月(相澤友佑).xlsx");
     expect(attendanceFilename("abcs_regular", "2026-11", "相澤友佑", "ABCS正社員（普通）勤務表.xlsm")).toBe("ABCS正社員（普通）勤務表11月(相澤友佑).xlsm");
   });

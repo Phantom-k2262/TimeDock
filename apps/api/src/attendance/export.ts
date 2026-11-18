@@ -273,9 +273,15 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
     });
     entries[path] = strToU8(xml);
     const submissionPath = worksheetPath(entries, ["勤務表（会社提出用）"]);
-    if (submissionPath) {
-      entries[submissionPath] = strToU8(clearCells(strFromU8(entries[submissionPath]), expandCellRange(13, 13, 16, 46)));
-    }
+    let submissionXml = submissionPath
+      ? clearCells(strFromU8(entries[submissionPath]), expandCellRange(13, 13, 16, 46))
+      : null;
+    input.entries.forEach((entry) => {
+      const day = Number(String(entry.work_date ?? "").slice(-2));
+      if (!submissionXml || !Number.isInteger(day) || day < 1 || day > 31) return;
+      submissionXml = patchCells(submissionXml, [[`M${15 + day}`, entry.note ?? ""]]);
+    });
+    if (submissionPath && submissionXml) entries[submissionPath] = strToU8(submissionXml);
   }
   if (input.format === "leave_request") {
     const path = worksheetPath(entries, ["1ﾍﾟｰｼﾞ~5ﾍﾟｰｼﾞ"]);
