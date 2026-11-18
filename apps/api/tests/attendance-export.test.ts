@@ -28,9 +28,9 @@ describe("attendance workbook export", () => {
 
     expect(workbook["xl/vbaProject.bin"]).toEqual(new Uint8Array([1, 2, 3]));
     expect(strFromU8(workbook["[Content_Types].xml"])).toContain("macroEnabled.main+xml");
-    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('fullCalcOnLoad="1"');
-    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('calcMode="auto"');
-    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('forceFullCalc="1"');
+    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('fullCalcOnLoad="0"');
+    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('calcMode="manual"');
+    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('forceFullCalc="0"');
     expect(strFromU8(workbook["xl/workbook.xml"])).toContain("name=\"KeepMe\"");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("相澤友佑");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("s=\"11\"");
@@ -43,7 +43,7 @@ describe("attendance workbook export", () => {
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("既存データ");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="D26" s="15"><f>KeepMe</f><v>99</v></c>');
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="E26" s="15"><f t="shared" si="42"/><v>123</v></c>');
-    expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="D15" s="18"><f>SUM(D9)</f><v/></c>');
+    expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="D15" s="18"><f>SUM(D9)</f><v>99</v></c>');
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).not.toContain("前回の残存データ");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="E9" s="13"');
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('<c r="AA9" s="13"/>');

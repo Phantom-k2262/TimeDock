@@ -158,13 +158,10 @@ function expandCellRange(startColumn: number, endColumn: number, startRow: numbe
 }
 
 function initializeAbcsInputSheet(xml: string) {
-  // The VBA macro clears these user-entry ranges after identity/month are set.
-  // Run this before applying attendance entries so stale sample data can never
-  // leak into a generated submission.
+  // Only daily input cells are initialized. Project rows and all other
+  // template content are protected from accidental overwrites.
   return clearCells(xml, [
-    ...expandCellRange(4, 34, 9, 10),
-    ...expandCellRange(4, 34, 12, 14),
-    ...expandCellRange(4, 34, 26, 55),
+    ...expandCellRange(4, 34, 9, 14),
   ]);
 }
 
@@ -244,13 +241,16 @@ function refreshSubmissionReferenceCaches(xml: string, inputXml: string) {
     const formula = content.match(/<f\b[^>]*>([\s\S]*?)<\/f\s*>/)?.[1];
     if (!formula) return cell;
     const normalized = decodeXml(formula).trim();
-    const source = normalized.match(/^IF\(\s*'?勤務表（入力用）'?!(\$?[A-Z]+\$?\d+)\s*(<>0|=0|="")\s*,\s*""\s*,\s*'?勤務表（入力用）'?!\$?([A-Z]+)\$?(\d+)\s*\)$/i);
+    const source = normalized.match(/'?勤務表（入力用）'?!\$?([A-Z]+)\$?(\d+)/i);
     if (!source) return cell;
-    const sourceReference = source[1].replace(/\$/g, "");
+    const sourceReference = `${source[1]}${source[2]}`;
     const value = sourceValues.get(sourceReference);
     if (!value) return cell;
-    const empty = value.value === "" || (source[2] === "<>0" || source[2] === "=0") && Number(value.value) === 0;
-    const result = empty ? "" : value.value;
+    const numericValue = Number(value.value);
+    let result = value.value;
+    if (/IF\([^,]+(?:<>0|=0|="")\s*,\s*""/i.test(normalized)) result = value.value === "" || /(?:<>0|=0)/i.test(normalized) && numericValue === 0 ? "" : value.value;
+    else if (/IF\([^,]+=0\s*,\s*0\s*,/i.test(normalized)) result = value.value === "" || numericValue === 0 ? "0" : value.value;
+    if (/TEXT\([^,]+,\s*"\[h\]:mm"\s*\)/i.test(normalized) && Number.isFinite(numericValue)) { const minutes = Math.round(numericValue * 1440); result = `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`; }
     const cached = `<v>${escapeXml(result)}</v>`;
     const cachePattern = /<v\b[^>]*(?:\/>|>[\s\S]*?<\/v\s*>)/;
     if (cachePattern.test(content)) return `<c${attributes}>${content.replace(cachePattern, cached)}</c>`;
@@ -258,13 +258,107 @@ function refreshSubmissionReferenceCaches(xml: string, inputXml: string) {
   });
 }
 
+function patchFormulaCache(xml: string, reference: string, value: unknown) {
+  return xml.replace(new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*)>([\\s\\S]*?)</c>`), (_cell, attributes, content) => {
+    const cache = `<v>${escapeXml(asCell(value))}</v>`;
+    const pattern = /<v\b[^>]*(?:\/>|>[\s\S]*?<\/v\s*>)/;
+    return `<c${attributes}>${pattern.test(content) ? content.replace(pattern, cache) : `${content}${cache}`}</c>`;
+  });
+}
+
+function clockMinutes(value: unknown) {
+  if (typeof value !== "string" || !/^\d{1,2}:\d{2}$/.test(value)) return null;
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function calculatedAbcsRows(entries: Array<Record<string, unknown>>) {
+  const byDay = new Map<number, { ordinary: number; holiday: number; night: number; total: number; substitute: number; late: number }>();
+  for (const entry of entries) {
+    const day = Number(String(entry.work_date ?? "").slice(-2));
+    if (!Number.isInteger(day) || day < 1 || day > 31) continue;
+    const start = clockMinutes(entry.start_time); const end = clockMinutes(entry.end_time);
+    const ordinaryBreak = Math.max(0, Number(entry.ordinary_break_minutes ?? entry.break_minutes ?? 0) || 0);
+    const nightBreak = Math.max(0, Number(entry.night_break_minutes ?? 0) || 0);
+    const span = start === null || end === null ? 0 : (end >= start ? end - start : end + 1440 - start);
+    const worked = Math.max(0, span - ordinaryBreak - nightBreak) / 1440;
+    const code = typeof entry.work_code === "string" && entry.work_code ? entry.work_code : "D";
+    const holiday = code === "*" || code === "H" || code === "Y";
+    const ordinary = holiday ? 0 : Math.max(0, worked - 8 / 24);
+    const holidayValue = holiday ? worked : 0;
+    byDay.set(day, { ordinary, holiday: holidayValue, night: 0, total: ordinary + holidayValue, substitute: 0, late: 0 });
+  }
+  return byDay;
+}
+
+function applyAbcsFormulaResults(xml: string, entries: Array<Record<string, unknown>>) {
+  const byDay = new Map<number, { ordinary: number; holiday: number; night: number; total: number; substitute: number; late: number }>();
+  for (const entry of entries) {
+    const day = Number(String(entry.work_date ?? "").slice(-2));
+    if (!Number.isInteger(day) || day < 1 || day > 31) continue;
+    const start = clockMinutes(entry.start_time); const end = clockMinutes(entry.end_time);
+    const ordinaryBreak = Math.max(0, Number(entry.ordinary_break_minutes ?? entry.break_minutes ?? 0) || 0);
+    const nightBreak = Math.max(0, Number(entry.night_break_minutes ?? 0) || 0);
+    const span = start === null || end === null ? 0 : (end >= start ? end - start : end + 1440 - start);
+    const worked = Math.max(0, span - ordinaryBreak - nightBreak) / 1440;
+    const code = typeof entry.work_code === "string" && entry.work_code ? entry.work_code : "D";
+    const holiday = code === "*" || code === "H" || code === "Y";
+    const ordinary = holiday ? 0 : Math.max(0, worked - 8 / 24);
+    const holidayValue = holiday ? worked : 0;
+    byDay.set(day, { ordinary, holiday: holidayValue, night: 0, total: ordinary + holidayValue, substitute: 0, late: 0 });
+  }
+  for (let day = 1; day <= 31; day += 1) {
+    const column = excelColumn(3 + day); const result = byDay.get(day) ?? { ordinary: 0, holiday: 0, night: 0, total: 0, substitute: 0, late: 0 };
+    for (const [row, value] of Object.entries({ 18: result.ordinary, 19: result.holiday, 20: result.night, 21: result.total, 22: result.substitute, 23: result.late })) {
+      const reference = `${column}${row}`;
+      if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchFormulaCache(xml, reference, value);
+    }
+  }
+  return xml;
+}
+
+function applySubmissionFormulaResults(xml: string, inputXml: string, entries: Array<Record<string, unknown>>) {
+  const byDay = calculatedAbcsRows(entries);
+  const totals = [...byDay.values()].reduce((sum, value) => ({ ordinary: sum.ordinary + value.ordinary, holiday: sum.holiday + value.holiday, night: sum.night + value.night, total: sum.total + value.total, substitute: sum.substitute + value.substitute, late: sum.late + value.late }), { ordinary: 0, holiday: 0, night: 0, total: 0, substitute: 0, late: 0 });
+  const sourceValues = worksheetValues(inputXml);
+  const workedTotal = [...byDay.values()].reduce((sum, value) => sum + value.total, 0);
+  const codeCount = (codes: string[]) => entries.filter((entry) => codes.includes(String(entry.work_code ?? "D"))).length;
+  const values: Record<string, unknown> = {
+    I48: totals.holiday,
+    J48: totals.night,
+    K48: totals.substitute,
+    L48: totals.late,
+    N48: totals.total - totals.substitute,
+    P48: Math.round((totals.total - totals.substitute) * 1440) % 60,
+    Q48: workedTotal,
+    D52: entries.filter((entry) => entry.end_time).length,
+    E52: entries.filter((entry) => byDay.get(Number(String(entry.work_date ?? "").slice(-2)))?.holiday).length,
+    F52: codeCount(["D"]) + codeCount(["DH"]) * 0.5,
+    G52: codeCount(["Y"]) + codeCount(["H"]) * 0.5,
+    H52: codeCount(["K"]) + codeCount(["KH"]) * 0.5,
+    I52: codeCount(["T"]) + codeCount(["TH"]) * 0.5,
+    J52: codeCount(["TN"]) + codeCount(["THN"]) * 0.5,
+    K52: entries.filter((entry) => byDay.get(Number(String(entry.work_date ?? "").slice(-2)))?.late).length,
+    L52: sourceValues.get("B23")?.value ?? 0,
+  };
+  for (const [reference, value] of Object.entries(values)) {
+    if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchFormulaCache(xml, reference, value);
+  }
+  return xml;
+}
+
 function finalizeWorkbookBeforeOutput(entries: Record<string, Uint8Array>) {
-  // This is intentionally the last workbook mutation before ZIP creation.
-  // Workers cannot execute Excel's calculation engine or VBA. Keep the
-  // template's cached values (removing them makes the workbook appear blank),
-  // refresh direct input-sheet references, and ask Excel to recalculate all
-  // formulas when the workbook is opened.
-  requestFormulaRecalculation(entries);
+  // Preserve the calculated caches. Recalculating VBA UDFs on open while
+  // macros are blocked would replace them with #NAME?; Excel users can still
+  // recalculate manually when macros are enabled.
+  const source = entries["xl/workbook.xml"];
+  if (!source) return;
+  let workbook = strFromU8(source);
+  const attributes = ` calcMode="manual" fullCalcOnLoad="0" forceFullCalc="0"`;
+  const pattern = /<calcPr\b([^>]*)\s*\/>|<calcPr\b([^>]*)>[\s\S]*?<\/calcPr\s*>/;
+  workbook = pattern.test(workbook) ? workbook.replace(pattern, `<calcPr${attributes}/>` ) : workbook.replace(/<\/workbook>/, `<calcPr${attributes}/></workbook>`);
+  entries["xl/workbook.xml"] = strToU8(workbook);
+  delete entries["xl/calcChain.xml"];
 }
 
 function excelColumn(number: number) {
@@ -330,21 +424,22 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
     // The template contains cached results for the sample data. Clear only
     // calculated attendance rows so those results cannot leak into an empty
     // export; formulas themselves remain intact for Excel to recalculate.
-    xml = clearFormulaCaches(xml, (reference) => [15, 18, 19, 20, 21, 22, 23].includes(Number(reference.match(/\d+$/)?.[0])));
+    xml = applyAbcsFormulaResults(xml, input.entries);
     entries[path] = strToU8(xml);
     const submissionPath = worksheetPath(entries, ["勤務表（会社提出用）"]);
     let submissionXml = submissionPath
-      ? clearCells(strFromU8(entries[submissionPath]), expandCellRange(13, 13, 16, 46))
+      ? clearCells(strFromU8(entries[submissionPath]), [...expandCellRange(13, 13, 16, 46), "A56"])
       : null;
     input.entries.forEach((entry) => {
       const day = Number(String(entry.work_date ?? "").slice(-2));
       if (!submissionXml || !Number.isInteger(day) || day < 1 || day > 31) return;
       submissionXml = patchCells(submissionXml, [[`M${15 + day}`, entry.note ?? ""]]);
     });
+    if (submissionXml) submissionXml = patchCells(submissionXml, [["A56", input.report?.overtime_comment ?? ""]]);
     if (submissionPath && submissionXml) {
       changedPaths.add(submissionPath);
-      submissionXml = clearFormulaCaches(submissionXml, (_reference, formula) => /勤務表（入力用）'?!\$?[A-Z]+\$?(15|18|19|20|21|22|23)\b/.test(decodeXml(formula)));
       submissionXml = refreshSubmissionReferenceCaches(submissionXml, xml);
+      submissionXml = applySubmissionFormulaResults(submissionXml, xml, input.entries);
       entries[submissionPath] = strToU8(submissionXml);
     }
   }

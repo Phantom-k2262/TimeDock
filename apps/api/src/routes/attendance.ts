@@ -119,9 +119,9 @@ attendanceRoutes.put("/monthly-report", async (c) => {
   if (!user) return error(c, 401, "ログインが必要です");
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   const targetMonth = month(body?.targetMonth);
-  if (!body || !targetMonth || ["summary", "achievements", "nextSteps"].some((field) => body[field] !== undefined && typeof body[field] !== "string")) return error(c, 400, "月次報告の入力を確認してください");
+  if (!body || !targetMonth || ["summary", "achievements", "nextSteps", "overtimeComment"].some((field) => body[field] !== undefined && typeof body[field] !== "string")) return error(c, 400, "月次報告の入力を確認してください");
   const now = new Date().toISOString();
-  await c.env.DB.prepare("INSERT INTO monthly_reports (id, user_id, target_month, summary, achievements, next_steps, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7) ON CONFLICT(user_id, target_month) DO UPDATE SET summary = excluded.summary, achievements = excluded.achievements, next_steps = excluded.next_steps, updated_at = excluded.updated_at").bind(crypto.randomUUID(), user.id, targetMonth, body.summary ?? null, body.achievements ?? null, body.nextSteps ?? null, now).run();
+  await c.env.DB.prepare("INSERT INTO monthly_reports (id, user_id, target_month, summary, achievements, next_steps, overtime_comment, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) ON CONFLICT(user_id, target_month) DO UPDATE SET summary = excluded.summary, achievements = excluded.achievements, next_steps = excluded.next_steps, overtime_comment = excluded.overtime_comment, updated_at = excluded.updated_at").bind(crypto.randomUUID(), user.id, targetMonth, body.summary ?? null, body.achievements ?? null, body.nextSteps ?? null, body.overtimeComment ?? null, now).run();
   return c.json({ ok: true });
 });
 
@@ -151,7 +151,7 @@ attendanceRoutes.get("/export", async (c) => {
     c.env.DB.prepare("SELECT work_date, start_time, end_time, break_minutes, CASE WHEN ordinary_break_minutes = 0 AND night_break_minutes = 0 AND break_minutes > 0 THEN break_minutes ELSE ordinary_break_minutes END AS ordinary_break_minutes, night_break_minutes, project_name, note FROM attendance_entries WHERE user_id = ?1 AND target_month = ?2 ORDER BY work_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT start_date, end_date, leave_type, reason, status FROM leave_requests WHERE user_id = ?1 AND target_month = ?2 ORDER BY start_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
     c.env.DB.prepare("SELECT expense_date, category, amount, description FROM expense_items WHERE user_id = ?1 AND target_month = ?2 ORDER BY expense_date").bind(user.id, targetMonth).all<Record<string, unknown>>(),
-    c.env.DB.prepare("SELECT summary, achievements, next_steps FROM monthly_reports WHERE user_id = ?1 AND target_month = ?2").bind(user.id, targetMonth).first<Record<string, unknown>>(),
+    c.env.DB.prepare("SELECT summary, achievements, next_steps, overtime_comment FROM monthly_reports WHERE user_id = ?1 AND target_month = ?2").bind(user.id, targetMonth).first<Record<string, unknown>>(),
   ]);
   const template = await attendanceTemplate(c, format);
   if (!template) return error(c, 503, "出力テンプレートが未登録です。管理者がサンプルブックをテンプレートとして配置してください");
