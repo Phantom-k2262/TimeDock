@@ -27,6 +27,8 @@ describe("attendance workbook export", () => {
     expect(workbook["xl/vbaProject.bin"]).toEqual(new Uint8Array([1, 2, 3]));
     expect(strFromU8(workbook["[Content_Types].xml"])).toContain("macroEnabled.main+xml");
     expect(strFromU8(workbook["xl/workbook.xml"])).toContain('fullCalcOnLoad="1"');
+    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('calcMode="auto"');
+    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('forceFullCalc="1"');
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("相澤友佑");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("s=\"11\"");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("r=\"D9\"");

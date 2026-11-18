@@ -202,6 +202,13 @@ function requestFormulaRecalculation(entries: Record<string, Uint8Array>) {
   delete entries["xl/calcChain.xml"];
 }
 
+function finalizeWorkbookBeforeOutput(entries: Record<string, Uint8Array>) {
+  // This is intentionally the last workbook mutation before ZIP creation.
+  // Workers cannot execute Excel's calculation engine, so the copied workbook
+  // is marked for automatic full recalculation when opened by Excel.
+  requestFormulaRecalculation(entries);
+}
+
 function excelColumn(number: number) {
   let result = "";
   for (let value = number; value > 0; value = Math.floor((value - 1) / 26)) result = String.fromCharCode(65 + ((value - 1) % 26)) + result;
@@ -278,8 +285,8 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
     });
     entries[path] = strToU8(xml);
   }
-  // VBA cannot run inside Workers. Preserve the formulas and ask Excel to recalculate
-  // them when the copied workbook is opened, matching the macro-enabled template flow.
-  requestFormulaRecalculation(entries);
+  // VBA and Excel's calculation engine cannot run inside Workers. Preserve the
+  // formulas and finalize the workbook for a full recalculation on open.
+  finalizeWorkbookBeforeOutput(entries);
   return zipSync(entries, { level: 6 });
 }
