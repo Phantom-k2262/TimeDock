@@ -1,5 +1,4 @@
 import type { AttendanceExportFormat } from "@timesheet/shared";
-import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 type Cell = string | number | null | undefined;
@@ -95,41 +94,28 @@ export function attendanceFilename(format: AttendanceExportFormat, targetMonth: 
   return `作業報告書・作業実績報告書(SP用)Ver2.2_${person}.${extension}`;
 }
 
-function parseXml(xml: string) {
-  return new DOMParser().parseFromString(xml, "application/xml");
-}
-
 function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
-  const document = parseXml(xml);
-  const cells = document.getElementsByTagName("c");
-  const rows = document.getElementsByTagName("row");
+  const cellContent = (value: unknown, numeric?: boolean) => numeric
+    ? `<v>${escapeXml(value as Cell)}</v>`
+    : `<is><t xml:space="preserve">${escapeXml(value as Cell)}</t></is>`;
+
   for (const [reference, value, numeric] of values) {
-    let cell = Array.from(cells).find((candidate) => candidate.getAttribute("r") === reference);
-    if (!cell) {
-      const rowNumber = reference.match(/\d+$/)?.[0];
-      const row = Array.from(rows).find((candidate) => candidate.getAttribute("r") === rowNumber);
-      if (!row) continue;
-      cell = document.createElement("c");
-      cell.setAttribute("r", reference);
-      row.appendChild(cell);
+    const cellPattern = new RegExp(`<c\\b([^>]*\\br=["']${reference}["'][^>]*)>([\\s\\S]*?)</c>|<c\\b([^>]*\\br=["']${reference}["'][^>]*)\\s*/>`);
+    const match = xml.match(cellPattern);
+    if (match) {
+      const attributes = match[1] ?? match[3];
+      const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
+      const replacement = `<c${numeric ? withoutType : `${withoutType} t="inlineStr"`}>${cellContent(value, numeric)}</c>`;
+      xml = xml.replace(cellPattern, replacement);
+      continue;
     }
-    cell.removeAttribute("t");
-    while (cell.firstChild) cell.removeChild(cell.firstChild);
-    if (numeric) {
-      const valueElement = document.createElement("v");
-      valueElement.appendChild(document.createTextNode(String(value ?? "")));
-      cell.appendChild(valueElement);
-    } else {
-      cell.setAttribute("t", "inlineStr");
-      const inlineString = document.createElement("is");
-      const text = document.createElement("t");
-      text.setAttribute("xml:space", "preserve");
-      text.appendChild(document.createTextNode(String(value ?? "")));
-      inlineString.appendChild(text);
-      cell.appendChild(inlineString);
-    }
+
+    const rowNumber = reference.match(/\d+$/)?.[0];
+    if (!rowNumber) continue;
+    const rowPattern = new RegExp(`(<row\\b[^>]*\\br=["']${rowNumber}["'][^>]*>)([\\s\\S]*?)(</row>)`);
+    if (rowPattern.test(xml)) xml = xml.replace(rowPattern, `$1$2<c r="${reference}"${numeric ? "" : " t=\"inlineStr\""}>${cellContent(value, numeric)}</c>$3`);
   }
-  return new XMLSerializer().serializeToString(document);
+  return xml;
 }
 
 /**
@@ -139,17 +125,19 @@ function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
  * input ranges remain untouched.
  */
 function clearCells(xml: string, references: string[]) {
-  const document = parseXml(xml);
-  const cells = document.getElementsByTagName("c");
   for (const reference of references) {
-    const cell = Array.from(cells).find((candidate) => candidate.getAttribute("r") === reference);
-    if (!cell) continue;
-    cell.removeAttribute("t");
-    for (const child of Array.from(cell.childNodes)) {
-      if (child.nodeName === "f" || child.nodeName === "v" || child.nodeName === "is") cell.removeChild(child);
-    }
+    const cellPattern = new RegExp(`<c\\b([^>]*\\br=["']${reference}["'][^>]*)>([\\s\\S]*?)</c>`);
+    const match = xml.match(cellPattern);
+    if (!match) continue;
+    const attributes = match[1];
+    const content = match[2];
+    const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
+    // Initialization clears user-entered constants, but never removes a
+    // template formula. Formula caches are removed so Excel recalculates them.
+    const preservedFormula = content.match(/<f\b[\s\S]*?<\/f\s*>/)?.[0] ?? "";
+    xml = xml.replace(cellPattern, `<c${withoutType}>${preservedFormula}</c>`);
   }
-  return new XMLSerializer().serializeToString(document);
+  return xml;
 }
 
 function expandCellRange(startColumn: number, endColumn: number, startRow: number, endRow: number) {
@@ -191,21 +179,35 @@ function worksheetPath(entries: Record<string, Uint8Array>, names: string[]) {
 function requestFormulaRecalculation(entries: Record<string, Uint8Array>) {
   const source = entries["xl/workbook.xml"];
   if (!source) return;
-  const document = parseXml(strFromU8(source));
-  const existing = document.getElementsByTagName("calcPr")[0];
-  const calcPr = existing ?? document.createElement("calcPr");
-  calcPr.setAttribute("calcMode", "auto");
-  calcPr.setAttribute("fullCalcOnLoad", "1");
-  calcPr.setAttribute("forceFullCalc", "1");
-  if (!existing) document.documentElement.appendChild(calcPr);
-  entries["xl/workbook.xml"] = strToU8(new XMLSerializer().serializeToString(document));
+  let workbook = strFromU8(source);
+  const attributes = ` calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"`;
+  const calcPattern = /<calcPr\b([^>]*)\s*\/>|<calcPr\b([^>]*)>[\s\S]*?<\/calcPr\s*>/;
+  if (calcPattern.test(workbook)) {
+    workbook = workbook.replace(calcPattern, `<calcPr${attributes}/>`);
+  } else {
+    workbook = workbook.replace(/<\/workbook>/, `<calcPr${attributes}/></workbook>`);
+  }
+  entries["xl/workbook.xml"] = strToU8(workbook);
   delete entries["xl/calcChain.xml"];
+}
+
+function invalidateFormulaCaches(entries: Record<string, Uint8Array>) {
+  for (const path of Object.keys(entries)) {
+    if (!/^xl\/worksheets\/[^/]+\.xml$/.test(path)) continue;
+    const xml = strFromU8(entries[path]);
+    entries[path] = strToU8(xml.replace(/<c\b([^>]*)>([\s\S]*?)<\/c>/g, (cell, attributes, content) => {
+      if (!/<f\b/.test(content)) return cell;
+      return `<c${attributes}>${content.replace(/<v\b[^>]*>[\s\S]*?<\/v\s*>/g, "")}</c>`;
+    }));
+  }
 }
 
 function finalizeWorkbookBeforeOutput(entries: Record<string, Uint8Array>) {
   // This is intentionally the last workbook mutation before ZIP creation.
   // Workers cannot execute Excel's calculation engine, so the copied workbook
-  // is marked for automatic full recalculation when opened by Excel.
+  // is marked for automatic full recalculation when opened by Excel. Remove
+  // cached formula results so stale values cannot be mistaken for new data.
+  invalidateFormulaCaches(entries);
   requestFormulaRecalculation(entries);
 }
 
