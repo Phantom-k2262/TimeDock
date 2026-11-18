@@ -100,15 +100,17 @@ function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
     : `<is><t xml:space="preserve">${escapeXml(value as Cell)}</t></is>`;
   const updates = new Map(values.map(([reference, value, numeric]) => [reference, { value, numeric }]));
   const found = new Set<string>();
-  const cellPattern = /<c\b([^>]*\br=["']([^"']+)["'][^>]*)>([\s\S]*?)<\/c>|<c\b([^>]*\br=["']([^"']+)["'][^>]*)\s*\/>/g;
-  xml = xml.replace(cellPattern, (cell, attributes, reference, _content, selfClosingAttributes, selfClosingReference) => {
-    const ref = reference ?? selfClosingReference;
-    const update = updates.get(ref);
+  const replaceCell = (attributes: string, numeric: boolean | undefined, value: unknown) => {
+    const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
+    return `<c${numeric ? withoutType : `${withoutType} t="inlineStr"`}>${cellContent(value, numeric)}</c>`;
+  };
+  // Keep the self-closing branch first and make the attribute capture lazy so
+  // `/>` is consumed as a complete tag rather than as an opening `>`.
+  xml = xml.replace(/<c\b([^>]*?\br=["']([^"']+)["'][^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g, (cell, attributes, reference) => {
+    const update = updates.get(reference);
     if (!update) return cell;
-    found.add(ref);
-    const originalAttributes = attributes ?? selfClosingAttributes;
-    const withoutType = originalAttributes.replace(/\s+t=["'][^"']*["']/g, "");
-    return `<c${update.numeric ? withoutType : `${withoutType} t="inlineStr"`}>${cellContent(update.value, update.numeric)}</c>`;
+    found.add(reference);
+    return replaceCell(attributes, update.numeric, update.value);
   });
 
   const missingByRow = new Map<string, string[]>();
@@ -134,7 +136,7 @@ function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
  */
 function clearCells(xml: string, references: string[]) {
   const targets = new Set(references);
-  return xml.replace(/<c\b([^>]*\br=["']([^"']+)["'][^>]*)>([\s\S]*?)<\/c>/g, (cell, attributes, reference, content) => {
+  return xml.replace(/<c\b(?![^>]*\/>)((?:[^>]*\br=["']([^"']+)["'][^>]*))>([\s\S]*?)<\/c>/g, (cell, attributes, reference, content) => {
     if (!targets.has(reference)) return cell;
     const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
     // Initialization clears user-entered constants, but never removes a
@@ -199,7 +201,7 @@ function invalidateFormulaCaches(entries: Record<string, Uint8Array>) {
   for (const path of Object.keys(entries)) {
     if (!/^xl\/worksheets\/[^/]+\.xml$/.test(path)) continue;
     const xml = strFromU8(entries[path]);
-    entries[path] = strToU8(xml.replace(/<c\b([^>]*)>([\s\S]*?)<\/c>/g, (cell, attributes, content) => {
+    entries[path] = strToU8(xml.replace(/<c\b(?![^>]*\/>)([^>]*)>([\s\S]*?)<\/c>/g, (cell, attributes, content) => {
       if (!/<f\b/.test(content)) return cell;
       return `<c${attributes}>${content.replace(/<v\b[^>]*>[\s\S]*?<\/v\s*>/g, "")}</c>`;
     }));
