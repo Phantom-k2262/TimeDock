@@ -146,6 +146,14 @@ select { border: 1px solid #dbe1ea; border-radius: .45rem; padding: .65rem .8rem
 .attendance-tabs button { padding: .65rem .85rem; border: 1px solid #dbe1ea; border-radius: .45rem; color: #526079; background: #fff; font-weight: 700; }
 .attendance-tabs button.active { border-color: #3157d5; color: #3157d5; background: #edf1ff; }
 .attendance-panel { display: grid; gap: 1rem; }
+.attendance-summary-panel { display: grid; gap: 1rem; }
+.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }
+.summary-grid div { display: grid; gap: .25rem; padding: .8rem 1rem; border: 1px solid #dfe5f0; border-radius: .6rem; background: #f8faff; }
+.summary-grid span { color: #65738b; font-size: .82rem; }
+.summary-grid strong { color: #17233f; font-size: 1.15rem; }
+.attendance-summary-panel label { display: grid; gap: .35rem; max-width: 760px; }
+.attendance-summary-panel textarea { resize: vertical; line-height: 1.6; }
+@media (max-width: 720px) { .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .attendance-entry-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .75rem; align-items: end; }
 .attendance-entry-form button { min-height: 2.7rem; }
 .attendance-table { display: grid; overflow-x: auto; border: 1px solid #e5e9f0; border-radius: .5rem; }
