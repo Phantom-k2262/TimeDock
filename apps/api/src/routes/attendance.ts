@@ -57,10 +57,18 @@ attendanceRoutes.put("/profile", async (c) => {
   const user = await currentUser(c);
   if (!user) return error(c, 401, "ログインが必要です");
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
-  const fields = ["employeeCode", "nameKana", "companyName", "divisionName", "departmentName", "projectName", "clientName"] as const;
+  const fields = ["employeeCode", "nameKana", "companyName", "divisionName", "departmentName", "projectName", "clientName", "dispatchWorkContent", "dispatchDestinationPostalCode", "dispatchDestinationOfficeName", "dispatchDestinationAddress", "workLocationOrgUnit", "workLocationPostalCode", "workLocationAddress", "workPattern", "statutoryHoliday"] as const;
   if (!body || fields.some((field) => body[field] !== undefined && typeof body[field] !== "string")) return error(c, 400, "共通項目を確認してください");
+  if (body.workPattern !== undefined && body.workPattern !== "" && body.workPattern !== "通常勤務" && body.workPattern !== "シフト勤務") return error(c, 400, "勤務形態を確認してください");
+  const holidays = ["", "日", "月", "火", "水", "木", "金", "土", "定まっていない"];
+  if (body.statutoryHoliday !== undefined && !holidays.includes(String(body.statutoryHoliday))) return error(c, 400, "法定休日を確認してください");
+  const postalCodePattern = /^(?:\d{7}|\d{3}-\d{4})$/;
+  for (const field of ["dispatchDestinationPostalCode", "workLocationPostalCode"] as const) {
+    const value = String(body[field] ?? "");
+    if (value !== "" && !postalCodePattern.test(value)) return error(c, 400, "郵便番号は7桁、または xxx-xxxx 形式で入力してください");
+  }
   const now = new Date().toISOString();
-  await c.env.DB.prepare("INSERT INTO attendance_profiles (user_id, employee_code, name_kana, company_name, division_name, department_name, project_name, client_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9) ON CONFLICT(user_id) DO UPDATE SET employee_code = excluded.employee_code, name_kana = excluded.name_kana, company_name = excluded.company_name, division_name = excluded.division_name, department_name = excluded.department_name, project_name = excluded.project_name, client_name = excluded.client_name, updated_at = excluded.updated_at").bind(user.id, body.employeeCode ?? null, body.nameKana ?? null, body.companyName ?? null, body.divisionName ?? null, body.departmentName ?? null, body.projectName ?? null, body.clientName ?? null, now).run();
+  await c.env.DB.prepare("INSERT INTO attendance_profiles (user_id, employee_code, name_kana, company_name, division_name, department_name, project_name, client_name, dispatch_work_content, dispatch_destination_postal_code, dispatch_destination_office_name, dispatch_destination_address, work_location_org_unit, work_location_postal_code, work_location_address, work_pattern, statutory_holiday, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18) ON CONFLICT(user_id) DO UPDATE SET employee_code = excluded.employee_code, name_kana = excluded.name_kana, company_name = excluded.company_name, division_name = excluded.division_name, department_name = excluded.department_name, project_name = excluded.project_name, client_name = excluded.client_name, dispatch_work_content = excluded.dispatch_work_content, dispatch_destination_postal_code = excluded.dispatch_destination_postal_code, dispatch_destination_office_name = excluded.dispatch_destination_office_name, dispatch_destination_address = excluded.dispatch_destination_address, work_location_org_unit = excluded.work_location_org_unit, work_location_postal_code = excluded.work_location_postal_code, work_location_address = excluded.work_location_address, work_pattern = excluded.work_pattern, statutory_holiday = excluded.statutory_holiday, updated_at = excluded.updated_at").bind(user.id, body.employeeCode ?? null, body.nameKana ?? null, body.companyName ?? null, body.divisionName ?? null, body.departmentName ?? null, body.projectName ?? null, body.clientName ?? null, body.dispatchWorkContent ?? null, body.dispatchDestinationPostalCode ?? null, body.dispatchDestinationOfficeName ?? null, body.dispatchDestinationAddress ?? null, body.workLocationOrgUnit ?? null, body.workLocationPostalCode ?? null, body.workLocationAddress ?? null, body.workPattern ?? null, body.statutoryHoliday ?? null, now).run();
   return c.json({ ok: true });
 });
 
@@ -228,7 +236,7 @@ attendanceRoutes.get("/export", async (c) => {
   const workbook = createAttendanceWorkbookFromTemplate(template.data, { format, month: targetMonth, generatedAt, displayName: user.displayName, profile: profileRow ?? { display_name: user.displayName }, entries: entries.results, leaveRequests: leaveRequests.results, expenses: expenses.results, report, monthlyInput, submissionReady: format === "abcs_regular", validationWarnings });
   logRequestStage(c, "xlsm.generation.complete");
   const isMacroEnabled = template.name.toLowerCase().endsWith(".xlsm");
-  const filename = attendanceFilename(format, targetMonth, user.displayName, template.name);
+  const filename = attendanceFilename(format, targetMonth, user.displayName, template.name, String(profileRow?.project_name ?? ""));
   const contentType = isMacroEnabled ? "application/vnd.ms-excel.sheet.macroEnabled.12" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   return new Response(workbook as unknown as BodyInit, { headers: { "Content-Type": contentType, "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`, "Cache-Control": "private, no-store", "X-TimeDock-Formula-Evaluation": "partial;deterministic-cache;deferred-to-excel", "X-TimeDock-VBA": isMacroEnabled ? "preserved-not-executed" : "not-present" } });
 });

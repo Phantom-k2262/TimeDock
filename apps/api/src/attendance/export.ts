@@ -88,11 +88,11 @@ function safeFilePart(value: string) {
   return value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_") || "未設定";
 }
 
-export function attendanceFilename(format: AttendanceExportFormat, targetMonth: string, displayName: string, templateName?: string) {
+export function attendanceFilename(format: AttendanceExportFormat, targetMonth: string, displayName: string, templateName?: string, projectName?: string) {
   const [year, month] = targetMonth.split("-").map(Number);
   const person = safeFilePart(displayName);
   const extension = templateName?.toLowerCase().endsWith(".xlsm") ? "xlsm" : "xlsx";
-  if (format === "aaaa_sp") return `【北國銀行次期コア】作業実績表（SP派遣用）${month}月_(${person}).${extension}`;
+  if (format === "aaaa_sp") return `【${safeFilePart(projectName ?? "未設定")}】作業実績表（SP派遣用）${month}月_(${person}).${extension}`;
   if (format === "abcs_regular") return `ABCS正社員（普通）勤務表${month}月(${person}).${extension}`;
   if (format === "leave_request") {
     const fiscalStart = month >= 4 ? year : year - 1;
@@ -320,6 +320,83 @@ function refreshSpDateFormulaCaches(xml: string, month: string) {
     xml = patchTypedFormulaCache(xml, `B${row}`, date ? weekdays[date.getUTCDay()] : "", "string");
   }
   return xml;
+}
+
+function postalCodeValue(value: unknown): string | number {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/\D/g, "");
+  // The template stores postal codes as seven-digit numeric cells and uses
+  // the existing number format to display them as 〒xxx-xxxx.
+  return digits.length === 7 ? Number(digits) : raw;
+}
+
+function refreshAaaaSpFormulaCaches(xml: string, month: string, entries: Array<Record<string, unknown>>, statutoryHoliday: string, workPattern: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+  const byDay = new Map<number, Record<string, unknown>>();
+  for (const entry of entries) {
+    const day = Number(String(entry.work_date ?? "").slice(-2));
+    if (Number.isInteger(day) && day >= 1 && day <= 31) byDay.set(day, entry);
+  }
+  let totalActual = 0;
+  let totalOvertime = 0;
+  let totalHoliday = 0;
+  for (let day = 1; day <= 31; day += 1) {
+    const row = 14 + day;
+    const date = day <= daysInMonth ? new Date(Date.UTC(year, monthNumber - 1, day)) : null;
+    const weekday = date ? weekdays[date.getUTCDay()] : "";
+    const holiday = Boolean(date && statutoryHoliday && weekday === statutoryHoliday);
+    const entry = byDay.get(day);
+    const start = entry?.start_time ? timeNumber(entry.start_time) : 0;
+    const end = entry?.end_time ? timeNumber(entry.end_time) : 0;
+    const breakMinutes = Math.max(0, Number(entry?.ordinary_break_minutes ?? entry?.break_minutes ?? 0) || 0) + Math.max(0, Number(entry?.night_break_minutes ?? 0) || 0);
+    const startMinutes = Math.floor(start / 100) * 60 + start % 100;
+    const endMinutes = Math.floor(end / 100) * 60 + end % 100;
+    const elapsed = entry?.start_time && entry?.end_time ? (endMinutes >= startMinutes ? endMinutes - startMinutes : endMinutes + 1440 - startMinutes) : 0;
+    const actual = Math.max(0, elapsed - breakMinutes);
+    const overtime = workPattern === "シフト勤務" || holiday ? 0 : Math.max(0, actual - 480);
+    const holidayWork = holiday ? actual : 0;
+    totalActual += actual;
+    totalOvertime += overtime;
+    totalHoliday += holidayWork;
+    const cacheValues: Array<[string, unknown, "number" | "string", "raw" | "hhmm"]> = [
+      [`A${row}`, date ? excelSerial(`${month}-${String(day).padStart(2, "0")}`) : "", date ? "number" : "string", "raw"],
+      [`B${row}`, weekday, "string", "raw"], [`C${row}`, holiday ? "○" : "", "string", "raw"],
+      [`T${row}`, elapsed, "number", "raw"], [`U${row}`, actual, "number", "raw"], [`V${row}`, breakMinutes, "number", "hhmm"],
+      [`W${row}`, Math.min(actual, 480), "number", "raw"], [`X${row}`, workPattern === "シフト勤務" ? "" : (holiday ? 0 : overtime), workPattern === "シフト勤務" ? "string" : "number", "raw"],
+      [`Y${row}`, workPattern === "シフト勤務" ? "" : holidayWork, workPattern === "シフト勤務" ? "string" : "number", "raw"],
+      [`J${row}`, actual, "number", "hhmm"], [`L${row}`, workPattern === "シフト勤務" ? "" : overtime, workPattern === "シフト勤務" ? "string" : "number", "hhmm"],
+      [`N${row}`, workPattern === "シフト勤務" ? "" : holidayWork, workPattern === "シフト勤務" ? "string" : "number", "hhmm"],
+    ];
+    for (const [reference, value, type, representation] of cacheValues) {
+      const cacheValue = type === "number" && representation === "hhmm" ? timeNumberFromMinutes(value) : value;
+      xml = patchTypedFormulaCache(xml, reference, cacheValue, type);
+    }
+  }
+  for (const [reference, value] of [["U46", totalActual], ["X46", totalOvertime], ["Y46", totalHoliday]] as const) xml = patchTypedFormulaCache(xml, reference, value, "number");
+  for (const [reference, value] of [["J46", totalActual], ["L46", totalOvertime], ["N46", totalHoliday]] as const) xml = patchTypedFormulaCache(xml, reference, timeNumberFromMinutes(value), "number");
+  return xml;
+}
+
+function applyAaaaSpWorkbook(entries: Record<string, Uint8Array>, input: TemplateInput, values: Array<[string, unknown, boolean?]>, changedPaths: Set<string>) {
+  const path = worksheetPath(entries, ["作業実績表(ABC用)"]);
+  if (!path) throw new Error("テンプレートに作業実績表(ABC用)シートがありません");
+  let xml = strFromU8(entries[path]);
+  const cleared: string[] = [];
+  for (let day = 1; day <= 31; day += 1) { const row = 14 + day; cleared.push(`D${row}`, `F${row}`, `H${row}`, `P${row}`); }
+  // Keep unused input cells truly blank. Writing "" with patchCells creates
+  // an inline string cell; Excel then treats it as non-blank and arithmetic
+  // formulas such as INT(D15/100) return #VALUE! after recalculation.
+  xml = clearCells(xml, cleared);
+  xml = updateFormulaCachesXml(xml, [{ reference: "A2", value: `${String(input.profile.company_name ?? "")}　御中`, numeric: false }]);
+  xml = patchCells(xml, values);
+  xml = refreshAaaaSpFormulaCaches(xml, input.month, input.entries, String(input.profile.statutory_holiday ?? ""), String(input.profile.work_pattern ?? ""));
+  entries[path] = strToU8(xml);
+  changedPaths.add(path);
+  setWorksheetVisibility(entries, ["立替金明細書 (サンプル)"], true);
+  setWorksheetVisibility(entries, ["立替金明細書", "立替金明細書(No2)", "立替金明細書(No3)", "領収書添付用紙"], input.expenses.length === 0);
 }
 
 function patchTypedFormulaCache(xml: string, reference: string, value: unknown, type: "number" | "string") {
@@ -1222,6 +1299,15 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   const departmentName = profile.department_name ?? "";
   const projectName = profile.project_name ?? "";
   const clientName = profile.client_name ?? "";
+  const dispatchWorkContent = profile.dispatch_work_content ?? "";
+  const dispatchDestinationPostalCode = postalCodeValue(profile.dispatch_destination_postal_code);
+  const dispatchDestinationOfficeName = profile.dispatch_destination_office_name ?? "";
+  const dispatchDestinationAddress = profile.dispatch_destination_address ?? "";
+  const workLocationOrgUnit = profile.work_location_org_unit ?? "";
+  const workLocationPostalCode = postalCodeValue(profile.work_location_postal_code);
+  const workLocationAddress = profile.work_location_address ?? "";
+  const workPattern = profile.work_pattern ?? "";
+  const statutoryHoliday = profile.statutory_holiday ?? "";
 
   const changedPaths = new Set<string>([
     "xl/workbook.xml",
@@ -1230,10 +1316,8 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
     "[Content_Types].xml",
   ]);
   if (input.format === "aaaa_sp") {
-    const path = worksheetPath(entries, ["作業実績表(ABC用)"]);
-    if (!path) throw new Error("テンプレートに作業実績表(ABC用)シートがありません");
-    changedPaths.add(path);
-    entries[path] = strToU8(patchCells(strFromU8(entries[path]), [["C3", monthValue, true], ["E6", companyName], ["E7", name], ["E8", projectName], ["E9", clientName]]));
+    applyAaaaSpWorkbook(entries, input, [["C3", monthValue, true], ["E6", companyName], ["O6", statutoryHoliday], ["E7", name], ["M7", workPattern], ["E8", dispatchWorkContent], ["E9", dispatchDestinationOfficeName], ["E10", dispatchDestinationPostalCode, typeof dispatchDestinationPostalCode === "number"], ["I10", dispatchDestinationAddress], ["E11", workLocationOrgUnit], ["E12", workLocationPostalCode, typeof workLocationPostalCode === "number"], ["I12", workLocationAddress], ...input.entries.flatMap((entry) => { const day = Number(String(entry.work_date ?? "").slice(-2)); if (!Number.isInteger(day) || day < 1 || day > 31) return []; return [[`D${14 + day}`, timeNumber(entry.start_time), true], [`F${14 + day}`, timeNumber(entry.end_time), true], [`H${14 + day}`, minutesAsHundredHours((Number(entry.ordinary_break_minutes ?? entry.break_minutes ?? 0) || 0) + (Number(entry.night_break_minutes ?? 0) || 0)), true], [`P${14 + day}`, entry.note ?? ""]] as Array<[string, unknown, boolean?]>; })], changedPaths);
+    applySpExpenseInputs(entries, input, changedPaths);
   }
   if (input.format === "abcs_regular") {
     const path = worksheetPath(entries, ["勤務表（入力用）"]);
@@ -1336,7 +1420,7 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   // ABCS-wide evaluator here would treat blank note cells as formula targets
   // and can write time caches into G12:G42 or erase cross-sheet reference
   // caches such as 作業報告書!I5. Keep that evaluator isolated to ABCS.
-  if (input.format !== "sp_report") recalculateWorkbookBeforeOutput(entries, input);
+  if (input.format === "abcs_regular" || input.format === "leave_request") recalculateWorkbookBeforeOutput(entries, input);
   if (input.format === "sp_report") {
     const workPath = worksheetPath(entries, ["作業実績表(ABC用)"]);
     if (workPath) {
@@ -1345,7 +1429,7 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       entries[workPath] = strToU8(workXml);
     }
   }
-  if (input.format === "sp_report") finalizeWorkbookBeforeOutput(entries, true);
+  if (input.format === "sp_report" || input.format === "aaaa_sp") finalizeWorkbookBeforeOutput(entries, true);
   // Recalculation may update formula caches on any worksheet, including hidden
   // support sheets. Allow those intended XML cache edits while still keeping
   // VBA, styles, relationships and other package parts byte-stable.

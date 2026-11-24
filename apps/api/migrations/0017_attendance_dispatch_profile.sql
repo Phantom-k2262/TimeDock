@@ -1,0 +1,9 @@
+ALTER TABLE attendance_profiles ADD COLUMN dispatch_work_content TEXT;
+ALTER TABLE attendance_profiles ADD COLUMN dispatch_destination_postal_code TEXT;
+ALTER TABLE attendance_profiles ADD COLUMN dispatch_destination_office_name TEXT;
+ALTER TABLE attendance_profiles ADD COLUMN dispatch_destination_address TEXT;
+ALTER TABLE attendance_profiles ADD COLUMN work_location_org_unit TEXT;
+ALTER TABLE attendance_profiles ADD COLUMN work_location_postal_code TEXT;
+ALTER TABLE attendance_profiles ADD COLUMN work_location_address TEXT;
+ALTER TABLE attendance_profiles ADD COLUMN work_pattern TEXT;
+ALTER TABLE attendance_profiles ADD COLUMN statutory_holiday TEXT;
