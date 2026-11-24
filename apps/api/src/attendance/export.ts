@@ -137,16 +137,19 @@ function patchCells(xml: string, values: Array<[string, unknown, boolean?]>) {
  */
 function clearCells(xml: string, references: string[]) {
   const targets = new Set(references);
-  return xml.replace(/<c\b(?![^>]*\/>)((?:[^>]*\br=["']([^"']+)["'][^>]*))>([\s\S]*?)<\/c>/g, (cell, attributes, reference, content) => {
+  const clearCell = (cell: string, attributes: string, reference: string, content?: string) => {
     if (!targets.has(reference)) return cell;
     const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
+    if (content === undefined) return `<c${withoutType}/>`;
     // Initialization clears user-entered constants, but never removes a
     // template formula or its cached display value. Excel will recalculate it
     // on open; retaining the cache prevents the sheet from appearing blank.
     const preservedFormula = content.match(/<f\b[^>]*(?:\/>|>[\s\S]*?<\/f\s*>)/)?.[0] ?? "";
     const preservedCache = preservedFormula ? content.match(/<v\b[^>]*>[\s\S]*?<\/v\s*>/)?.[0] ?? "" : "";
     return `<c${withoutType}>${preservedFormula}${preservedCache}</c>`;
-  });
+  };
+  xml = xml.replace(/<c\b([^>]*\br=["']([^"']+)["'][^>]*?)(?<!\/)>([\s\S]*?)<\/c>/g, clearCell);
+  return xml.replace(/<c\b([^>]*\br=["']([^"']+)["'][^>]*)\/>/g, (cell, attributes, reference) => clearCell(cell, attributes, reference));
 }
 
 function expandCellRange(startColumn: number, endColumn: number, startRow: number, endRow: number) {
@@ -158,10 +161,12 @@ function expandCellRange(startColumn: number, endColumn: number, startRow: numbe
 }
 
 function initializeAbcsInputSheet(xml: string) {
-  // Only daily input cells are initialized. Project rows and all other
-  // template content are protected from accidental overwrites.
+  // Match the VBA initialization ranges. D11:AH11 and D15:AH25 are not
+  // input-clear ranges and must remain intact.
   return clearCells(xml, [
-    ...expandCellRange(4, 34, 9, 14),
+    ...expandCellRange(4, 34, 9, 10),
+    ...expandCellRange(4, 34, 12, 14),
+    ...expandCellRange(4, 34, 26, 55),
   ]);
 }
 
@@ -182,6 +187,115 @@ function worksheetPath(entries: Record<string, Uint8Array>, names: string[]) {
   return null;
 }
 
+function setWorksheetVisibility(entries: Record<string, Uint8Array>, names: string[], hidden: boolean) {
+  const source = entries["xl/workbook.xml"];
+  if (!source) throw new Error("テンプレートにworkbook.xmlがありません");
+  let workbook = strFromU8(source);
+  const targets = new Set(names);
+  workbook = workbook.replace(/<sheet\b([^>]*\bname="([^"]+)"[^>]*)\/>/g, (sheet, attributes, name) => {
+    if (!targets.has(name)) return sheet;
+    const withoutState = attributes.replace(/\s+state="[^"]*"/g, "");
+    return `<sheet${hidden ? `${withoutState} state="hidden"` : withoutState}/>`;
+  });
+  entries["xl/workbook.xml"] = strToU8(workbook);
+}
+
+function isMeaningfulReportValue(value: unknown) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+}
+
+function hasMonthlyReportInput(report: Record<string, unknown> | null | undefined) {
+  return [report?.summary, report?.achievements, report?.next_steps, report?.overtime_comment].some(isMeaningfulReportValue);
+}
+
+function timeNumberFromMinutes(value: unknown) {
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes) || minutes < 0) return 0;
+  return Math.floor(minutes / 60) * 100 + (minutes % 60);
+}
+
+function refreshSpDateFormulaCaches(xml: string, month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) return xml;
+  const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+  for (let day = 1; day <= 31; day += 1) {
+    const row = 11 + day;
+    const date = day <= daysInMonth ? new Date(Date.UTC(year, monthNumber - 1, day)) : null;
+    xml = patchTypedFormulaCache(xml, `A${row}`, date ? excelSerial(`${month}-${String(day).padStart(2, "0")}`) : "", date ? "number" : "string");
+    xml = patchTypedFormulaCache(xml, `B${row}`, date ? weekdays[date.getUTCDay()] : "", "string");
+  }
+  return xml;
+}
+
+function clearSpReportInput(xml: string) {
+  return clearCells(xml, [
+    ...expandCellRange(3, 5, 12, 42),
+    ...expandCellRange(7, 8, 12, 42),
+  ]);
+}
+
+function applySpReportVisibility(entries: Record<string, Uint8Array>, input: TemplateInput) {
+  setWorksheetVisibility(entries, ["作業報告書 (サンプル)", "立替金明細書 (サンプル)"], true);
+  setWorksheetVisibility(entries, ["作業報告書"], !hasMonthlyReportInput(input.report));
+  const hasExpenses = input.expenses.length > 0;
+  setWorksheetVisibility(entries, ["立替金明細書", "立替金明細書(No2)", "立替金明細書(No3)", "領収書添付用紙"], !hasExpenses);
+}
+
+function expenseRowCapacity(path: string) {
+  return path.endsWith("sheet4.xml") ? { firstRow: 11, lastRow: 44 } : { firstRow: 7, lastRow: 50 };
+}
+
+function clearExpenseInputs(xml: string, firstRow: number, lastRow: number) {
+  const references: string[] = [];
+  for (let row = firstRow; row <= lastRow; row += 2) {
+    // Clear every detail field so sample values cannot leak into a real export.
+    // clearCells retains formula bodies and their existing cache by design.
+    for (let column = 1; column <= 38; column += 1) references.push(`${excelColumn(column)}${row}`);
+  }
+  return clearCells(xml, references);
+}
+
+function applySpExpenseInputs(entries: Record<string, Uint8Array>, input: TemplateInput, changedPaths: Set<string>) {
+  const pageNames = ["立替金明細書", "立替金明細書(No2)", "立替金明細書(No3)"];
+  const pages = pageNames.map((name) => ({ name, path: worksheetPath(entries, [name]) })).filter((page): page is { name: string; path: string } => Boolean(page.path));
+  const pageCapacity = pages.reduce((total, page) => {
+    const { firstRow, lastRow } = expenseRowCapacity(page.path);
+    return total + Math.floor((lastRow - firstRow) / 2) + 1;
+  }, 0);
+  if (input.expenses.length > pageCapacity) throw new Error(`経費明細がテンプレートの収容件数(${pageCapacity}件)を超えています`);
+
+  let expenseIndex = 0;
+  for (const page of pages) {
+    const { firstRow, lastRow } = expenseRowCapacity(page.path);
+    let xml = clearExpenseInputs(strFromU8(entries[page.path]), firstRow, lastRow);
+    for (let row = firstRow; row <= lastRow && expenseIndex < input.expenses.length; row += 2, expenseIndex += 1) {
+      const expense = input.expenses[expenseIndex];
+      const values: Array<[string, unknown, boolean?]> = [];
+      if (expense.expense_date) values.push([`A${row}`, excelSerial(String(expense.expense_date)), true]);
+      if (expense.category) values.push([`C${row}`, expense.category]);
+      if (expense.description) values.push([`G${row}`, expense.description]);
+      if (expense.amount !== null && expense.amount !== undefined && expense.amount !== "") {
+        // The current model stores a total amount, while the template calculates
+        // amount as unit price × count. Represent the total as one unit.
+        values.push([`X${row}`, Number(expense.amount), true], [`AA${row}`, 1, true]);
+      }
+      if (values.length) xml = patchCells(xml, values);
+    }
+    entries[page.path] = strToU8(xml);
+    changedPaths.add(page.path);
+  }
+
+  for (let index = 0; index < pages.length; index += 1) {
+    setWorksheetVisibility(entries, [pages[index].name], input.expenses.length === 0 || input.expenses.length <= pages.slice(0, index).reduce((total, page) => {
+      const { firstRow, lastRow } = expenseRowCapacity(page.path);
+      return total + Math.floor((lastRow - firstRow) / 2) + 1;
+    }, 0));
+  }
+}
+
 function requestFormulaRecalculation(entries: Record<string, Uint8Array>) {
   const source = entries["xl/workbook.xml"];
   if (!source) return;
@@ -194,7 +308,27 @@ function requestFormulaRecalculation(entries: Record<string, Uint8Array>) {
     workbook = workbook.replace(/<\/workbook>/, `<calcPr${attributes}/></workbook>`);
   }
   entries["xl/workbook.xml"] = strToU8(workbook);
+  removeCalcChainParts(entries);
+}
+
+function removeCalcChainParts(entries: Record<string, Uint8Array>) {
   delete entries["xl/calcChain.xml"];
+  const relationshipsPath = "xl/_rels/workbook.xml.rels";
+  const relationships = entries[relationshipsPath];
+  if (relationships) {
+    entries[relationshipsPath] = strToU8(strFromU8(relationships).replace(
+      /<Relationship\b(?=[^>]*\bType=["']http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/calcChain["'])[^>]*(?:\/>|><\/Relationship\s*>)/g,
+      "",
+    ));
+  }
+  const contentTypesPath = "[Content_Types].xml";
+  const contentTypes = entries[contentTypesPath];
+  if (contentTypes) {
+    entries[contentTypesPath] = strToU8(strFromU8(contentTypes).replace(
+      /<Override\b(?=[^>]*\bPartName=["']\/xl\/calcChain\.xml["'])[^>]*(?:\/>|><\/Override\s*>)/g,
+      "",
+    ));
+  }
 }
 
 function decodeXml(value: string) {
@@ -203,18 +337,19 @@ function decodeXml(value: string) {
 
 function worksheetValues(xml: string) {
   const values = new Map<string, { value: string; numeric: boolean }>();
-  for (const match of xml.matchAll(/<c\b([^>]*\br=["']([^"']+)["'][^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-    const attributes = match[1];
-    const content = match[3] ?? "";
+  for (const match of xml.matchAll(/<c\b([^>]*?\br=["']([^"']+)["'][^>]*?)\/>|<c\b([^>]*?\br=["']([^"']+)["'][^>]*?)>([\s\S]*?)<\/c\s*>/g)) {
+    const attributes = match[1] ?? match[3];
+    const reference = match[2] ?? match[4];
+    const content = match[5] ?? "";
     if (/<f\b/.test(content)) {
       const cached = content.match(/<v\b[^>]*>([\s\S]*?)<\/v\s*>/)?.[1];
-      if (cached !== undefined) values.set(match[2], { value: decodeXml(cached), numeric: !/\bt=["'](?:str|inlineStr)["']/.test(attributes) });
+      if (cached !== undefined) values.set(reference, { value: decodeXml(cached), numeric: !/\bt=["'](?:str|inlineStr|s)["']/.test(attributes) });
       continue;
     }
     const inline = content.match(/<t\b[^>]*>([\s\S]*?)<\/t\s*>/)?.[1];
     const numeric = content.match(/<v\b[^>]*>([\s\S]*?)<\/v\s*>/)?.[1];
-    if (inline !== undefined) values.set(match[2], { value: decodeXml(inline), numeric: false });
-    else if (numeric !== undefined) values.set(match[2], { value: decodeXml(numeric), numeric: true });
+    if (inline !== undefined) values.set(reference, { value: decodeXml(inline), numeric: false });
+    else if (numeric !== undefined) values.set(reference, { value: decodeXml(numeric), numeric: !/\bt=["'](?:str|inlineStr|s)["']/.test(attributes) });
   }
   return values;
 }
@@ -237,24 +372,28 @@ function clearFormulaCaches(xml: string, shouldClear: (reference: string, formul
  */
 function refreshSubmissionReferenceCaches(xml: string, inputXml: string) {
   const sourceValues = worksheetValues(inputXml);
-  return xml.replace(/<c\b([^>]*\br=["']([^"']+)["'][^>]*?)>([\s\S]*?)<\/c>/g, (cell, attributes, _reference, content) => {
+  // Do not match self-closing cells. Empty cells are common in the submission
+  // sheet; consuming the following cells here produces malformed worksheet XML.
+  return xml.replace(/<c\b([^>]*\br=["']([^"']+)["'][^>]*?)(?<!\/)>([\s\S]*?)<\/c>/g, (cell, attributes, _reference, content) => {
     const formula = content.match(/<f\b[^>]*>([\s\S]*?)<\/f\s*>/)?.[1];
     if (!formula) return cell;
     const normalized = decodeXml(formula).trim();
     const source = normalized.match(/'?勤務表（入力用）'?!\$?([A-Z]+)\$?(\d+)/i);
     if (!source) return cell;
     const sourceReference = `${source[1]}${source[2]}`;
-    const value = sourceValues.get(sourceReference);
-    if (!value) return cell;
+    const value = sourceValues.get(sourceReference) ?? { value: "", numeric: false };
     const numericValue = Number(value.value);
     let result = value.value;
     if (/IF\([^,]+(?:<>0|=0|="")\s*,\s*""/i.test(normalized)) result = value.value === "" || /(?:<>0|=0)/i.test(normalized) && numericValue === 0 ? "" : value.value;
     else if (/IF\([^,]+=0\s*,\s*0\s*,/i.test(normalized)) result = value.value === "" || numericValue === 0 ? "0" : value.value;
     if (/TEXT\([^,]+,\s*"\[h\]:mm"\s*\)/i.test(normalized) && Number.isFinite(numericValue)) { const minutes = Math.round(numericValue * 1440); result = `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`; }
+    const resultIsString = result === "" || /TEXT\(/i.test(normalized) || !value.numeric;
+    const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
+    const nextAttributes = resultIsString ? `${withoutType} t="str"` : withoutType;
     const cached = `<v>${escapeXml(result)}</v>`;
     const cachePattern = /<v\b[^>]*(?:\/>|>[\s\S]*?<\/v\s*>)/;
-    if (cachePattern.test(content)) return `<c${attributes}>${content.replace(cachePattern, cached)}</c>`;
-    return `<c${attributes}>${content}</c>`.replace(/<\/c>$/, `${cached}</c>`);
+    if (cachePattern.test(content)) return `<c${nextAttributes}>${content.replace(cachePattern, cached)}</c>`;
+    return `<c${nextAttributes}>${content}</c>`.replace(/<\/c>$/, `${cached}</c>`);
   });
 }
 
@@ -266,6 +405,211 @@ function patchFormulaCache(xml: string, reference: string, value: unknown) {
   });
 }
 
+function patchTypedFormulaCache(xml: string, reference: string, value: unknown, type: "number" | "string") {
+  return xml.replace(new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*)>([\\s\\S]*?)</c>`), (_cell, attributes, content) => {
+    const withoutType = attributes.replace(/\s+t=["'][^"']*["']/g, "");
+    const nextAttributes = type === "string" ? `${withoutType} t="str"` : withoutType;
+    const cache = `<v>${escapeXml(type === "string" ? String(value ?? "") : asCell(value))}</v>`;
+    const pattern = /<v\b[^>]*(?:\/>|>[\s\S]*?<\/v\s*>)/;
+    const nextContent = pattern.test(content) ? content.replace(pattern, cache) : `${content}${cache}`;
+    return `<c${nextAttributes}>${nextContent}</c>`;
+  });
+}
+
+/**
+ * The company-submission sheet is a presentation sheet.  Some source
+ * templates contain a strikethrough font in a style that is also shared by
+ * the input sheet.  Changing that shared font would alter the input sheet,
+ * so clone only the affected cell styles and remove strikethrough from the
+ * clones used by the submission sheet.
+ */
+function removeSubmissionStrikethrough(entries: Record<string, Uint8Array>, submissionXml: string) {
+  const stylesPath = "xl/styles.xml";
+  const stylesSource = entries[stylesPath];
+  if (!stylesSource) return { xml: submissionXml, changed: false };
+  let styles = strFromU8(stylesSource);
+  const cellXfsMatch = styles.match(/<cellXfs\b([^>]*)>([\s\S]*?)<\/cellXfs\s*>/);
+  const fontsMatch = styles.match(/<fonts\b([^>]*)>([\s\S]*?)<\/fonts\s*>/);
+  if (!cellXfsMatch || !fontsMatch) return { xml: submissionXml, changed: false };
+
+  const styleIds = new Set<number>();
+  for (const match of submissionXml.matchAll(/<c\b[^>]*\bs="(\d+)"[^>]*>/g)) styleIds.add(Number(match[1]));
+  if (!styleIds.size) return { xml: submissionXml, changed: false };
+
+  const xfTags = [...cellXfsMatch[2].matchAll(/<xf\b[^>]*(?:\/>|>[\s\S]*?<\/xf\s*>)/g)].map((match) => match[0]);
+  const fontTags = [...fontsMatch[2].matchAll(/<font\b[\s\S]*?(?:<\/font\s*>)/g)].map((match) => match[0]);
+  const struckFontIds = new Set<number>();
+  const stylesToClone = new Map<number, { xf: string; fontId: number }>();
+  for (const styleId of styleIds) {
+    const xf = xfTags[styleId];
+    if (!xf) continue;
+    const fontId = Number(xf.match(/\bfontId="(\d+)"/)?.[1]);
+    const font = fontTags[fontId];
+    if (!font || !/<strike\b/i.test(font) || /<strike\b[^>]*\bval="0"/i.test(font)) continue;
+    struckFontIds.add(fontId);
+    stylesToClone.set(styleId, { xf, fontId });
+  }
+  if (!stylesToClone.size) return { xml: submissionXml, changed: false };
+
+  const fontCloneIds = new Map<number, number>();
+  let nextFontId = fontTags.length;
+  let nextStyleId = xfTags.length;
+  let fontBody = fontsMatch[2];
+  for (const fontId of struckFontIds) {
+    const font = fontTags[fontId];
+    if (!font) continue;
+    fontCloneIds.set(fontId, nextFontId++);
+    fontBody += font.replace(/<strike\b[^>]*\/\s*>/gi, "").replace(/<strike\b[^>]*>[\s\S]*?<\/strike\s*>/gi, "");
+  }
+  const styleCloneIds = new Map<number, number>();
+  let xfBody = cellXfsMatch[2];
+  for (const [styleId, descriptor] of stylesToClone) {
+    const cloneId = nextStyleId++;
+    styleCloneIds.set(styleId, cloneId);
+    const clonedXf = descriptor.xf.replace(/\bfontId="\d+"/, `fontId="${fontCloneIds.get(descriptor.fontId)}"`);
+    xfBody += clonedXf;
+  }
+  styles = styles.replace(fontsMatch[0], `<fonts${fontsMatch[1].replace(/\bcount="\d+"/, `count="${nextFontId}"`)}>${fontBody}</fonts>`);
+  styles = styles.replace(cellXfsMatch[0], `<cellXfs${cellXfsMatch[1].replace(/\bcount="\d+"/, `count="${nextStyleId}"`)}>${xfBody}</cellXfs>`);
+  entries[stylesPath] = strToU8(styles);
+
+  const rewrittenXml = submissionXml.replace(/(<c\b[^>]*\bs=")(\d+)("[^>]*>)/g, (cell, prefix, styleIdText, suffix) => {
+    const cloneId = styleCloneIds.get(Number(styleIdText));
+    return cloneId === undefined ? cell : `${prefix}${cloneId}${suffix}`;
+  });
+  return { xml: rewrittenXml, changed: true };
+}
+
+function applyAbcsCalendarResults(xml: string, month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) return xml;
+  const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  for (let day = 1; day <= 31; day += 1) {
+    const column = excelColumn(3 + day);
+    const value = day <= daysInMonth ? excelSerial(`${month}-${String(day).padStart(2, "0")}`) : "";
+    xml = patchTypedFormulaCache(xml, `${column}7`, value, value === "" ? "string" : "number");
+    xml = patchTypedFormulaCache(xml, `${column}8`, value, value === "" ? "string" : "number");
+  }
+  return xml;
+}
+
+function applySubmissionDailyReferenceCaches(xml: string, inputXml: string) {
+  const sourceValues = worksheetValues(inputXml);
+  const sourceRows: Record<string, number> = { A: 7, B: 8, C: 9, D: 10, E: 12, F: 13, G: 14, H: 18, I: 19, J: 20, K: 22, L: 23 };
+  const formulaForCell = (reference: string) => xml.match(new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>([\\s\\S]*?)</c\\s*>`))?.[1]?.match(/<f\b[^>]*(?:>|\/>)((?:[\s\S]*?))<\/f\s*>/)?.[1] ?? "";
+  const returnsBlankForZero = (formula: string) => /\bIF\s*\([^,]*(?:=|<>)\s*0\s*,\s*""\s*,/i.test(formula);
+  for (let day = 1; day <= 31; day += 1) {
+    const inputColumn = excelColumn(3 + day);
+    const submissionRow = 15 + day;
+    for (const [submissionColumn, sourceRow] of Object.entries(sourceRows)) {
+      const reference = `${submissionColumn}${submissionRow}`;
+      const source = sourceValues.get(`${inputColumn}${sourceRow}`);
+      const sourceValue = source?.numeric && source?.value !== "" && Number.isFinite(Number(source?.value)) ? Number(source.value) : (source?.value ?? "");
+      const value = typeof sourceValue === "number" && sourceValue === 0 && returnsBlankForZero(formulaForCell(reference)) ? "" : sourceValue;
+      const type = typeof value === "number" ? "number" : "string";
+      xml = patchTypedFormulaCache(xml, reference, value, type);
+    }
+  }
+  return xml;
+}
+
+function minutesAsHundredHours(value: unknown) {
+  const minutes = Number(value ?? 0);
+  if (!Number.isFinite(minutes) || minutes < 0) return 0;
+  return Math.floor(minutes / 60) * 100 + (minutes % 60);
+}
+
+function refreshSpWorkFormulaCaches(xml: string, entries: Array<Record<string, unknown>>) {
+  const byDay = new Map<number, Record<string, unknown>>();
+  for (const entry of entries) {
+    const day = Number(String(entry.work_date ?? "").slice(-2));
+    if (Number.isInteger(day) && day >= 1 && day <= 31) byDay.set(day, entry);
+  }
+  for (let day = 1; day <= 31; day += 1) {
+    const row = 11 + day;
+    const entry = byDay.get(day);
+    const start = entry?.start_time ? timeNumber(entry.start_time) : 0;
+    const end = entry?.end_time ? timeNumber(entry.end_time) : 0;
+    const breakValue = entry?.break_minutes === null || entry?.break_minutes === undefined || entry?.break_minutes === ""
+      ? 0
+      : timeNumberFromMinutes(entry.break_minutes);
+    const startMinutes = Math.floor(start / 100) * 60 + start % 100;
+    const endMinutes = Math.floor(end / 100) * 60 + end % 100;
+    const elapsed = endMinutes - startMinutes;
+    const breakMinutes = Math.floor(breakValue / 100) * 60 + breakValue % 100;
+    const netMinutes = entry?.start_time ? (elapsed > 0 ? elapsed - breakMinutes : elapsed + 1440 - breakMinutes) : 0;
+    const workValue = Math.floor(netMinutes / 60) * 100 + (netMinutes % 60);
+    const displayedBreak = Math.floor(breakValue / 60) * 100 + (breakValue % 60);
+    for (const [reference, value] of Object.entries({
+      [`F${row}`]: workValue,
+      [`J${row}`]: entry?.start_time ? elapsed : 0,
+      [`K${row}`]: netMinutes,
+      [`L${row}`]: displayedBreak,
+    })) {
+      if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) {
+        xml = patchTypedFormulaCache(xml, reference, value, "number");
+      }
+    }
+  }
+  const totalNetMinutes = [...byDay.values()].reduce((sum, entry) => {
+    const start = entry.start_time ? timeNumber(entry.start_time) : 0;
+    const end = entry.end_time ? timeNumber(entry.end_time) : 0;
+    if (!entry.start_time) return sum;
+    const startMinutes = Math.floor(start / 100) * 60 + start % 100;
+    const endMinutes = Math.floor(end / 100) * 60 + end % 100;
+    const elapsed = endMinutes - startMinutes;
+    const breakValue = entry.break_minutes === null || entry.break_minutes === undefined || entry.break_minutes === ""
+      ? 0
+      : timeNumberFromMinutes(entry.break_minutes);
+    const breakMinutes = Math.floor(breakValue / 100) * 60 + breakValue % 100;
+    return sum + (elapsed > 0 ? elapsed : elapsed + 1440) - breakMinutes;
+  }, 0);
+  const totalWorkValue = Math.floor(totalNetMinutes / 60) * 100 + (totalNetMinutes % 60);
+  for (const [reference, value] of [["K43", totalNetMinutes], ["F43", totalWorkValue]] as const) {
+    if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) {
+      xml = patchTypedFormulaCache(xml, reference, value, "number");
+    }
+  }
+  return xml;
+}
+
+function refreshSpExpenseFormulaCaches(entries: Record<string, Uint8Array>, input: TemplateInput) {
+  const pageNames = ["立替金明細書", "立替金明細書(No2)", "立替金明細書(No3)"];
+  const pages = pageNames.map((name) => ({ name, path: worksheetPath(entries, [name]) })).filter((page): page is { name: string; path: string } => Boolean(page.path));
+  let expenseIndex = 0;
+  const pageTotals: number[] = [];
+  for (const page of pages) {
+    const { firstRow, lastRow } = expenseRowCapacity(page.path);
+    let xml = strFromU8(entries[page.path]);
+    let total = 0;
+    for (let row = firstRow; row <= lastRow; row += 2, expenseIndex += 1) {
+      const expense = input.expenses[expenseIndex];
+      const amount = expense && expense.amount !== null && expense.amount !== undefined && expense.amount !== "" ? Number(expense.amount) : 0;
+      const numericAmount = Number.isFinite(amount) ? amount : 0;
+      if (expense) total += numericAmount;
+      const amountReference = `AB${row}`;
+      const reimbursedReference = `AE${row}`;
+      if (new RegExp(`<c\\b[^>]*\\br="${amountReference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchTypedFormulaCache(xml, amountReference, numericAmount, "number");
+      if (new RegExp(`<c\\b[^>]*\\br="${reimbursedReference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchTypedFormulaCache(xml, reimbursedReference, "", "string");
+    }
+    const totalRow = page.path.endsWith("sheet4.xml") ? 45 : 51;
+    for (const [reference, value] of [[`AB${totalRow}`, total], [`AE${totalRow}`, 0]] as const) {
+      if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchTypedFormulaCache(xml, reference, value, "number");
+    }
+    entries[page.path] = strToU8(xml);
+    pageTotals.push(total);
+  }
+  const firstPage = pages[0];
+  if (firstPage) {
+    let xml = strFromU8(entries[firstPage.path]);
+    const total = pageTotals.reduce((sum, value) => sum + value, 0);
+    for (const [reference, value] of [["AB46", total], ["AE46", 0], ["AB47", total]] as const) {
+      if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchTypedFormulaCache(xml, reference, value, "number");
+    }
+    entries[firstPage.path] = strToU8(xml);
+  }
+}
+
 function clockMinutes(value: unknown) {
   if (typeof value !== "string" || !/^\d{1,2}:\d{2}$/.test(value)) return null;
   const [hours, minutes] = value.split(":").map(Number);
@@ -273,7 +617,7 @@ function clockMinutes(value: unknown) {
 }
 
 function calculatedAbcsRows(entries: Array<Record<string, unknown>>) {
-  const byDay = new Map<number, { ordinary: number; holiday: number; night: number; total: number; substitute: number; late: number }>();
+  const byDay = new Map<number, { worked: number; ordinary: number; holiday: number; night: number; total: number; substitute: number; late: number }>();
   for (const entry of entries) {
     const day = Number(String(entry.work_date ?? "").slice(-2));
     if (!Number.isInteger(day) || day < 1 || day > 31) continue;
@@ -282,17 +626,32 @@ function calculatedAbcsRows(entries: Array<Record<string, unknown>>) {
     const nightBreak = Math.max(0, Number(entry.night_break_minutes ?? 0) || 0);
     const span = start === null || end === null ? 0 : (end >= start ? end - start : end + 1440 - start);
     const worked = Math.max(0, span - ordinaryBreak - nightBreak) / 1440;
-    const code = typeof entry.work_code === "string" && entry.work_code ? entry.work_code : "D";
+    const code = entryAbcsWorkCode(entry);
     const holiday = code === "*" || code === "H" || code === "Y";
-    const ordinary = holiday ? 0 : Math.max(0, worked - 8 / 24);
+    const ordinary = holiday ? 0 : Math.max(0, worked - 465 / 1440);
     const holidayValue = holiday ? worked : 0;
-    byDay.set(day, { ordinary, holiday: holidayValue, night: 0, total: ordinary + holidayValue, substitute: 0, late: 0 });
+    byDay.set(day, { worked, ordinary, holiday: holidayValue, night: 0, total: ordinary + holidayValue, substitute: 0, late: 0 });
   }
   return byDay;
 }
 
+function defaultAbcsWorkCode(month: string, day: number) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(monthNumber) || day < 1 || day > new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()) return "";
+  const weekday = new Date(Date.UTC(year, monthNumber - 1, day)).getUTCDay();
+  return weekday === 0 || weekday === 6 ? "*" : "";
+}
+
+function entryAbcsWorkCode(entry: Record<string, unknown>) {
+  const explicit = typeof entry.work_code === "string" ? entry.work_code : "";
+  if (explicit) return explicit;
+  if (entry.start_time || entry.end_time) return "";
+  const date = String(entry.work_date ?? "");
+  return date.length >= 10 ? defaultAbcsWorkCode(date.slice(0, 7), Number(date.slice(-2))) : "";
+}
+
 function applyAbcsFormulaResults(xml: string, entries: Array<Record<string, unknown>>) {
-  const byDay = new Map<number, { ordinary: number; holiday: number; night: number; total: number; substitute: number; late: number }>();
+  const byDay = new Map<number, { worked: number; ordinary: number; holiday: number; night: number; total: number; substitute: number; late: number }>();
   for (const entry of entries) {
     const day = Number(String(entry.work_date ?? "").slice(-2));
     if (!Number.isInteger(day) || day < 1 || day > 31) continue;
@@ -301,17 +660,56 @@ function applyAbcsFormulaResults(xml: string, entries: Array<Record<string, unkn
     const nightBreak = Math.max(0, Number(entry.night_break_minutes ?? 0) || 0);
     const span = start === null || end === null ? 0 : (end >= start ? end - start : end + 1440 - start);
     const worked = Math.max(0, span - ordinaryBreak - nightBreak) / 1440;
-    const code = typeof entry.work_code === "string" && entry.work_code ? entry.work_code : "D";
+    const code = entryAbcsWorkCode(entry);
     const holiday = code === "*" || code === "H" || code === "Y";
-    const ordinary = holiday ? 0 : Math.max(0, worked - 8 / 24);
+    const ordinary = holiday ? 0 : Math.max(0, worked - 465 / 1440);
     const holidayValue = holiday ? worked : 0;
-    byDay.set(day, { ordinary, holiday: holidayValue, night: 0, total: ordinary + holidayValue, substitute: 0, late: 0 });
+    byDay.set(day, { worked, ordinary, holiday: holidayValue, night: 0, total: ordinary + holidayValue, substitute: 0, late: 0 });
   }
   for (let day = 1; day <= 31; day += 1) {
-    const column = excelColumn(3 + day); const result = byDay.get(day) ?? { ordinary: 0, holiday: 0, night: 0, total: 0, substitute: 0, late: 0 };
-    for (const [row, value] of Object.entries({ 18: result.ordinary, 19: result.holiday, 20: result.night, 21: result.total, 22: result.substitute, 23: result.late })) {
+    const column = excelColumn(3 + day); const result = byDay.get(day) ?? { worked: 0, ordinary: 0, holiday: 0, night: 0, total: 0, substitute: 0, late: 0 };
+    for (const [row, value] of Object.entries({ 15: result.worked, 18: result.ordinary, 19: result.holiday, 20: result.night, 21: result.total, 22: result.substitute, 23: result.late })) {
       const reference = `${column}${row}`;
-      if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchFormulaCache(xml, reference, value);
+      if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchTypedFormulaCache(xml, reference, value, "number");
+    }
+    const reference = `${column}24`;
+    if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) {
+      // 時間差(D15,D74): when no project-time detail exists, the difference is
+      // the day's calculated work time.  The VBA function returns the ABCS
+      // workbook's HHMM number (730, 1030, ...), not an Excel day fraction.
+      // Empty days remain zero.
+      const workedMinutes = Math.round(result.worked * 1440);
+      xml = patchTypedFormulaCache(xml, reference, minutesAsHundredHours(workedMinutes), "number");
+    }
+  }
+  // The workbook uses shared formulas for the monthly summary cells.  The
+  // generic evaluator cannot reliably refresh shared-formula child caches,
+  // so rebuild them from the now-current daily caches.  Keep the values as
+  // Excel time serials; the template's number formats render them as hours.
+  const dailyValues = worksheetValues(xml);
+  for (let row = 17; row <= 23; row += 1) {
+    const reference = `B${row}`;
+    if (!new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) continue;
+    let sum = 0;
+    for (let day = 1; day <= 31; day += 1) {
+      const entry = dailyValues.get(`${excelColumn(3 + day)}${row}`);
+      const value = entry?.numeric ? Number(entry.value) : NaN;
+      if (Number.isFinite(value)) sum += value;
+    }
+    xml = patchTypedFormulaCache(xml, reference, sum, "number");
+  }
+  // Different ABCS template revisions place the total of the work-time row
+  // in AI15 or AT15.  Refresh whichever formula cell exists, without adding
+  // or changing any layout cells.
+  let workTotal = 0;
+  for (let day = 1; day <= 31; day += 1) {
+    const entry = dailyValues.get(`${excelColumn(3 + day)}15`);
+    const value = entry?.numeric ? Number(entry.value) : NaN;
+    if (Number.isFinite(value)) workTotal += value;
+  }
+  for (const reference of ["AI15", "AT15"]) {
+    if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) {
+      xml = patchTypedFormulaCache(xml, reference, workTotal, "number");
     }
   }
   return xml;
@@ -322,8 +720,15 @@ function applySubmissionFormulaResults(xml: string, inputXml: string, entries: A
   const totals = [...byDay.values()].reduce((sum, value) => ({ ordinary: sum.ordinary + value.ordinary, holiday: sum.holiday + value.holiday, night: sum.night + value.night, total: sum.total + value.total, substitute: sum.substitute + value.substitute, late: sum.late + value.late }), { ordinary: 0, holiday: 0, night: 0, total: 0, substitute: 0, late: 0 });
   const sourceValues = worksheetValues(inputXml);
   const workedTotal = [...byDay.values()].reduce((sum, value) => sum + value.total, 0);
-  const codeCount = (codes: string[]) => entries.filter((entry) => codes.includes(String(entry.work_code ?? "D"))).length;
+  const codeCount = (codes: string[]) => entries.filter((entry) => codes.includes(entryAbcsWorkCode(entry))).length;
+  const monthlyHours = sourceValues.get("B23")?.value;
+  const monthlyHoursNumber = Number(monthlyHours);
+  const monthlyHoursText = Number.isFinite(monthlyHoursNumber)
+    ? `${Math.floor(Math.round(monthlyHoursNumber * 1440) / 60)}:${String(Math.round(monthlyHoursNumber * 1440) % 60).padStart(2, "0")}`
+    : monthlyHours ?? "";
   const values: Record<string, unknown> = {
+    M48: totals.total === 0 ? (totals.substitute === 0 ? "" : "-") : (totals.substitute === 0 || totals.total >= totals.substitute ? "" : "-"),
+    H48: totals.ordinary,
     I48: totals.holiday,
     J48: totals.night,
     K48: totals.substitute,
@@ -339,26 +744,30 @@ function applySubmissionFormulaResults(xml: string, inputXml: string, entries: A
     I52: codeCount(["T"]) + codeCount(["TH"]) * 0.5,
     J52: codeCount(["TN"]) + codeCount(["THN"]) * 0.5,
     K52: entries.filter((entry) => byDay.get(Number(String(entry.work_date ?? "").slice(-2)))?.late).length,
-    L52: sourceValues.get("B23")?.value ?? 0,
+    L52: monthlyHoursText,
   };
   for (const [reference, value] of Object.entries(values)) {
-    if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) xml = patchFormulaCache(xml, reference, value);
+    if (new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>[\\s\\S]*?<f\\b`).test(xml)) {
+      xml = patchTypedFormulaCache(xml, reference, value, typeof value === "number" ? "number" : "string");
+    }
   }
   return xml;
 }
 
-function finalizeWorkbookBeforeOutput(entries: Record<string, Uint8Array>) {
+function finalizeWorkbookBeforeOutput(entries: Record<string, Uint8Array>, recalculateOnOpen = false) {
   // Preserve the calculated caches. Recalculating VBA UDFs on open while
   // macros are blocked would replace them with #NAME?; Excel users can still
   // recalculate manually when macros are enabled.
   const source = entries["xl/workbook.xml"];
   if (!source) return;
   let workbook = strFromU8(source);
-  const attributes = ` calcMode="manual" fullCalcOnLoad="0" forceFullCalc="0"`;
+  const attributes = recalculateOnOpen
+    ? ` calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"`
+    : ` calcMode="manual" fullCalcOnLoad="0" forceFullCalc="0"`;
   const pattern = /<calcPr\b([^>]*)\s*\/>|<calcPr\b([^>]*)>[\s\S]*?<\/calcPr\s*>/;
   workbook = pattern.test(workbook) ? workbook.replace(pattern, `<calcPr${attributes}/>` ) : workbook.replace(/<\/workbook>/, `<calcPr${attributes}/></workbook>`);
   entries["xl/workbook.xml"] = strToU8(workbook);
-  delete entries["xl/calcChain.xml"];
+  removeCalcChainParts(entries);
 }
 
 function excelColumn(number: number) {
@@ -397,7 +806,7 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
   const projectName = profile.project_name ?? "";
   const clientName = profile.client_name ?? "";
 
-  const changedPaths = new Set<string>(["xl/workbook.xml", "xl/calcChain.xml"]);
+  const changedPaths = new Set<string>(["xl/workbook.xml", "xl/calcChain.xml", "xl/_rels/workbook.xml.rels", "[Content_Types].xml"]);
   if (input.format === "aaaa_sp") {
     const path = worksheetPath(entries, ["作業実績表(ABC用)"]);
     if (!path) throw new Error("テンプレートに作業実績表(ABC用)シートがありません");
@@ -416,19 +825,20 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
       const day = Number(String(entry.work_date ?? "").slice(-2));
       if (!Number.isInteger(day) || day < 1 || day > 31) return;
       const column = excelColumn(3 + day);
-      const workCode = typeof entry.work_code === "string" && entry.work_code ? entry.work_code : "D";
+      const workCode = entryAbcsWorkCode(entry);
       const ordinaryBreak = Number(entry.ordinary_break_minutes ?? 0) === 0 && Number(entry.night_break_minutes ?? 0) === 0 && Number(entry.break_minutes ?? 0) > 0 ? entry.break_minutes : entry.ordinary_break_minutes ?? 0;
       const nightBreak = entry.night_break_minutes ?? 0;
-      xml = patchCells(xml, [[`${column}9`, workCode], [`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true], [`${column}13`, minutesAsExcelTime(ordinaryBreak), true], [`${column}14`, minutesAsExcelTime(nightBreak), true]]);
+      xml = patchCells(xml, [[`${column}9`, workCode], [`${column}10`, timeNumber(entry.start_time), true], [`${column}12`, timeNumber(entry.end_time), true], [`${column}13`, minutesAsHundredHours(ordinaryBreak), true], [`${column}14`, minutesAsHundredHours(nightBreak), true]]);
     });
     // The template contains cached results for the sample data. Clear only
     // calculated attendance rows so those results cannot leak into an empty
     // export; formulas themselves remain intact for Excel to recalculate.
+    xml = applyAbcsCalendarResults(xml, input.month);
     xml = applyAbcsFormulaResults(xml, input.entries);
     entries[path] = strToU8(xml);
     const submissionPath = worksheetPath(entries, ["勤務表（会社提出用）"]);
     let submissionXml = submissionPath
-      ? clearCells(strFromU8(entries[submissionPath]), [...expandCellRange(13, 13, 16, 46), "A56"])
+      ? clearCells(strFromU8(entries[submissionPath]), [...expandCellRange(13, 13, 16, 46), "A56", "L1", "M18", "M56", "P56"])
       : null;
     input.entries.forEach((entry) => {
       const day = Number(String(entry.work_date ?? "").slice(-2));
@@ -439,7 +849,11 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
     if (submissionPath && submissionXml) {
       changedPaths.add(submissionPath);
       submissionXml = refreshSubmissionReferenceCaches(submissionXml, xml);
+      submissionXml = applySubmissionDailyReferenceCaches(submissionXml, xml);
       submissionXml = applySubmissionFormulaResults(submissionXml, xml, input.entries);
+      const submissionStyleResult = removeSubmissionStrikethrough(entries, submissionXml);
+      submissionXml = submissionStyleResult.xml;
+      if (submissionStyleResult.changed) changedPaths.add("xl/styles.xml");
       entries[submissionPath] = strToU8(submissionXml);
     }
   }
@@ -457,17 +871,32 @@ export function createAttendanceWorkbookFromTemplate(template: Uint8Array, input
     const path = worksheetPath(entries, ["作業実績表(ABC用)"]);
     if (!path) throw new Error("テンプレートに作業実績表(ABC用)シートがありません");
     changedPaths.add(path);
-    let xml = patchCells(strFromU8(entries[path]), [["H1", generatedValue, true], ["E5", companyName], ["E6", name], ["A9", monthValue, true], ["C9", name], ["E9", projectName || clientName]]);
-    input.entries.slice(0, 31).forEach((entry, index) => {
-      const rowNumber = 13 + index;
-      const toNumber = (value: unknown) => typeof value === "string" ? Number(String(value).replace(":", "")) : Number(value ?? 0);
-      xml = patchCells(xml, [[`A${rowNumber}`, excelSerial(String(entry.work_date)), true], [`C${rowNumber}`, toNumber(entry.start_time), true], [`D${rowNumber}`, toNumber(entry.end_time), true], [`E${rowNumber}`, Number(entry.break_minutes ?? 0), true], [`G${rowNumber}`, entry.note ?? ""]]);
-    });
+    let xml = clearSpReportInput(strFromU8(entries[path]));
+    xml = patchCells(xml, [["H1", generatedValue, true], ["E5", companyName], ["E6", name], ["A9", monthValue, true], ["C9", name], ["E9", projectName || clientName]]);
+    for (const entry of input.entries) {
+      const day = Number(String(entry.work_date ?? "").slice(-2));
+      if (!Number.isInteger(day) || day < 1 || day > 31) continue;
+      const rowNumber = 11 + day;
+      const values: Array<[string, unknown, boolean?]> = [];
+      if (entry.start_time) values.push([`C${rowNumber}`, timeNumber(entry.start_time), true]);
+      if (entry.end_time) values.push([`D${rowNumber}`, timeNumber(entry.end_time), true]);
+      if (entry.break_minutes !== null && entry.break_minutes !== undefined && entry.break_minutes !== "") values.push([`E${rowNumber}`, timeNumberFromMinutes(entry.break_minutes), true]);
+      if (entry.note !== null && entry.note !== undefined && entry.note !== "") values.push([`G${rowNumber}`, entry.note]);
+      if (values.length) xml = patchCells(xml, values);
+    }
     entries[path] = strToU8(xml);
+    applySpReportVisibility(entries, input);
+    applySpExpenseInputs(entries, input, changedPaths);
+    let refreshedXml = refreshSpDateFormulaCaches(strFromU8(entries[path]), input.month);
+    refreshedXml = refreshSpWorkFormulaCaches(refreshedXml, input.entries);
+    entries[path] = strToU8(refreshedXml);
+    refreshSpExpenseFormulaCaches(entries, input);
+    requestFormulaRecalculation(entries);
+    changedPaths.add("xl/workbook.xml");
   }
   // VBA and Excel's calculation engine cannot run inside Workers. Preserve the
   // formulas and finalize the workbook for a full recalculation on open.
-  finalizeWorkbookBeforeOutput(entries);
+  finalizeWorkbookBeforeOutput(entries, input.format === "sp_report");
   const integrity = validateWorkbookIntegrity(originalEntries, entries, [...changedPaths]);
   if (!integrity.ok) {
     const detail = integrity.issues.map((issue) => `${issue.kind}:${issue.path}`).join(", ");
