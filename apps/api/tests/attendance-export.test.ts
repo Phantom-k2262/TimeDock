@@ -24,6 +24,8 @@ describe("attendance workbook export", () => {
     }
     const submission = strFromU8(workbook["xl/worksheets/sheet4.xml"]);
     const inputSheet = strFromU8(workbook["xl/worksheets/sheet3.xml"]);
+    const styles = strFromU8(workbook["xl/styles.xml"]);
+    expect(styles, "ABCS export must not introduce strikethrough fonts").not.toMatch(/<strike\b/i);
     const directReferenceCells = [...submission.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)]
       .filter(([, attributes, content]) => /\bt="str"\b/.test(attributes) && /<f[\s\S]*?勤務表（入力用）/.test(content));
     expect(directReferenceCells, "cross-sheet numeric caches must not remain string-typed").toEqual([]);
@@ -39,7 +41,7 @@ describe("attendance workbook export", () => {
     const ai15 = inputSheet.match(/<c\b[^>]*\br="AI15"[^>]*>[\s\S]*?<v>([^<]+)<\/v>/);
     expect(Number(ai15?.[1])).toBeCloseTo(1 / 3, 10);
     const l1 = submission.match(/<c\b([^>]*\br="L1"[^>]*)>([\s\S]*?)<\/c>/);
-    expect(l1?.[2]).not.toMatch(/<v\b|<is\b/);
+    expect(l1?.[2]).toMatch(/<v><\/v>/);
     expect(submission).toMatch(/<c\b[^>]*\br="F52"[^>]*>[\s\S]*?<v>1<\/v>/);
   });
 
@@ -59,6 +61,7 @@ describe("attendance workbook export", () => {
       displayName: "テスト利用者",
     }));
     const workSheet = strFromU8(workbook["xl/worksheets/sheet1.xml"]);
+    const reportSheet = strFromU8(workbook["xl/worksheets/sheet2.xml"]);
     const workbookXml = strFromU8(workbook["xl/workbook.xml"]);
     expect(workSheet).toContain('r="C14"');
     expect(workSheet).toContain('r="C14" s="');
@@ -68,10 +71,21 @@ describe("attendance workbook export", () => {
     expect(workSheet).toMatch(/r="F14"[^>]*>[\s\S]*?<f[^>]*(?:\/>|>[\s\S]*?<\/f>)[\s\S]*?<v>745<\/v>/);
     expect(workSheet).toMatch(/r="J14"[^>]*>[\s\S]*?<f[^>]*(?:\/>|>[\s\S]*?<\/f>)[\s\S]*?<v>540<\/v>/);
     expect(workSheet).toMatch(/r="K14"[^>]*>[\s\S]*?<f[^>]*(?:\/>|>[\s\S]*?<\/f>)[\s\S]*?<v>465<\/v>/);
-    expect(workSheet).toContain('r="A13" s="14"><f t="shared" ref="A13:A38" si="5">A12+1</f><v>46328</v></c>');
+    expect(workSheet).toMatch(/r="A12"[^>]*>[\s\S]*?<v>46327<\/v>/);
+    expect(workSheet).toMatch(/r="A13"[^>]*>[\s\S]*?<v>46328<\/v>/);
     expect(workSheet).toMatch(/r="A42"[^>]*t="str"[^>]*>[\s\S]*?<f[^>]*>[\s\S]*?<\/f>[\s\S]*?<v><\/v>/);
-    expect(workSheet).toContain('r="B13" s="15" t="str"><f t="shared" si="0"/><v>月</v></c>');
+    expect(workSheet).toMatch(/r="B13"[^>]*>[\s\S]*?<v>月<\/v>/);
     expect(workSheet).toContain('r="G14" s="134" t="inlineStr"><is><t xml:space="preserve">3日</t></is></c>');
+    for (let row = 12; row <= 42; row += 1) {
+      const marker = `r="G${row}"`;
+      const markerIndex = workSheet.indexOf(marker);
+      expect(markerIndex).toBeGreaterThan(-1);
+      const cellStart = workSheet.lastIndexOf("<c ", markerIndex);
+      const nextCell = workSheet.indexOf("<c ", markerIndex + marker.length);
+      const cell = workSheet.slice(cellStart, nextCell === -1 ? workSheet.length : nextCell);
+      expect(cell).not.toContain("<v>");
+    }
+    expect(reportSheet).toContain("<f>'作業実績表(ABC用)'!A9</f><v>46327</v>");
     expect(workSheet).not.toContain("00:60");
     expect(workSheet).toMatch(/r="E14"[^>]*>[\s\S]*?<v>115<\/v>/);
     expect(workSheet).toMatch(/r="F14"[^>]*>[\s\S]*?<f t="shared" si="1"\/><v>745<\/v>/);
@@ -139,7 +153,7 @@ describe("attendance workbook export", () => {
     expect(workbookXml).not.toMatch(/name="領収書添付用紙"[^>]*state="hidden"/);
   });
 
-  it.skipIf(!existsSync("D:/yusuke/ダウンロード/作業報告書・作業実績報告書(SP用)Ver2.2.xlsx"))("treats overtime comment as monthly-report input for visibility", () => {
+  it.skipIf(!existsSync("D:/yusuke/ダウンロード/作業報告書・作業実績報告書(SP用)Ver2.2.xlsx"))("keeps overtime-only comments out of the monthly report sheet", () => {
     const template = readFileSync("D:/yusuke/ダウンロード/作業報告書・作業実績報告書(SP用)Ver2.2.xlsx");
     const workbook = unzipSync(createAttendanceWorkbookFromTemplate(template, {
       format: "sp_report",
@@ -153,7 +167,7 @@ describe("attendance workbook export", () => {
       displayName: "テスト利用者",
     }));
     const workbookXml = strFromU8(workbook["xl/workbook.xml"]);
-    expect(workbookXml).not.toMatch(/name="作業報告書"[^>]*state="hidden"/);
+    expect(workbookXml).toMatch(/name="作業報告書"[^>]*state="hidden"/);
   });
 
   it("preserves the template package including macros and uses the attached filename format", () => {
@@ -182,9 +196,9 @@ describe("attendance workbook export", () => {
 
     expect(workbook["xl/vbaProject.bin"]).toEqual(new Uint8Array([1, 2, 3]));
     expect(strFromU8(workbook["[Content_Types].xml"])).toContain("macroEnabled.main+xml");
-    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('fullCalcOnLoad="0"');
-    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('calcMode="manual"');
-    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('forceFullCalc="0"');
+    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('fullCalcOnLoad="1"');
+    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('calcMode="auto"');
+    expect(strFromU8(workbook["xl/workbook.xml"])).toContain('forceFullCalc="1"');
     expect(strFromU8(workbook["xl/workbook.xml"])).toContain("name=\"KeepMe\"");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("相澤友佑");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain("s=\"11\"");
@@ -200,16 +214,16 @@ describe("attendance workbook export", () => {
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="D15" s="18"><f>SUM(D9)</f><v>0.3020833333333333</v></c>');
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).not.toContain("前回の残存データ");
     expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('r="E9" s="13"');
-    expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toContain('<c r="AA9" s="13"/>');
+    expect(strFromU8(workbook["xl/worksheets/sheet3.xml"])).toMatch(/r="AA9" s="13"/);
     expect(new DOMParser().parseFromString(strFromU8(workbook["xl/worksheets/sheet3.xml"]), "application/xml").getElementsByTagName("parsererror").length).toBe(0);
     expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="M16" s="21" t="inlineStr"><is><t xml:space="preserve">初回提出</t></is></c>');
     expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).not.toContain("末尾文字");
-    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="M18" s="22"><f>SUM(M16)</f><v>99</v></c>');
-    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="C16" s="23" t="str"><f>IF(\'勤務表（入力用）\'!D9="","",\'勤務表（入力用）\'!D9)</f><v></v></c>');
-    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="F16" s="23"><f>IF(\'勤務表（入力用）\'!D13="","",\'勤務表（入力用）\'!D13)</f><v>100</v></c>');
-    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toMatch(/r="F16" s="23"/);
+    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="M18" s="22"><f>SUM(M16)</f><v>0</v></c>');
+    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="C16" s="20" t="str"><f>IF(\'勤務表（入力用）\'!D9="","",\'勤務表（入力用）\'!D9)</f><v></v></c>');
+    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toContain('r="F16" s="20"><f>IF(\'勤務表（入力用）\'!D13="","",\'勤務表（入力用）\'!D13)</f><v>100</v></c>');
+    expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).toMatch(/r="F16" s="20"/);
     expect(strFromU8(workbook["xl/styles.xml"])).toContain("<strike/>");
-    expect(strFromU8(workbook["xl/styles.xml"])).toMatch(/<fonts count="3">[\s\S]*<font><sz val="11"\/><\/font><\/fonts>/);
+    expect(strFromU8(workbook["xl/styles.xml"])).toMatch(/<fonts count="2">[\s\S]*<font><strike\/><sz val="11"\/><\/font><\/fonts>/);
     expect(strFromU8(workbook["xl/worksheets/sheet4.xml"])).not.toContain("<v/><v>");
 
     const emptyWorkbook = unzipSync(createAttendanceWorkbookFromTemplate(template, {
